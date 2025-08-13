@@ -18,31 +18,31 @@
  */
 
 import crypto from "./crypto";
-import { Encodable } from "./data";
-import { concatUint8Array, decodeBase64, encodeBase64, encodeUTF8, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "./utils";
+import { Encodable, LocalStorage } from "./data";
+import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "./utils";
 
-/**
- * Creates a new Double Ratchet session.
- * 
- * @param opts.remoteKey The public key of the remote party.
- * @param opts.preSharedKey An optional pre-shared key to initialize the session.
- *   
- * @returns A new Double Ratchet session.
- */
-export function createSession(opts?: { remoteKey?: Uint8Array, preSharedKey?: Uint8Array }): Session {
-    return new Session(opts);
+type ExportedKeySession = {
+    secretKey: string;
+    remoteKey: string;
+    rootKey: string;
+    sendingChain: string;
+    receivingChain: string;
+    sendingCount: number;
+    receivingCount: number;
+    previousCount: number;
+    previousKeys: [number, Uint8Array][];
 }
 
 /**
  * Represents a secure Double Ratchet session.
  * Used for forward-secure encryption and decryption of messages.
  */
-export class Session {
+export class KeySession {
     private static readonly skipLimit = 1000;
     public static readonly version = 1;
     public static readonly rootKeyLength = crypto.box.keyLength;
 
-    private keyPair = crypto.ECDH.keyPair();
+    private keyPair: crypto.KeyPair;
     private _remoteKey?: Uint8Array;
     private rootKey?: Uint8Array;
     private sendingChain?: Uint8Array;
@@ -50,14 +50,15 @@ export class Session {
     private previousCount = 0;
     private receivingChain?: Uint8Array;
     private receivingCount = 0;
-    private previousKeys: KeyMap<number, Uint8Array> = new KeyMap<number, Uint8Array>();
+    private previousKeys = new KeyMap<number, Uint8Array>();
 
-    public constructor(opts: { remoteKey?: Uint8Array, preSharedKey?: Uint8Array } = {}) {
-        if (opts.preSharedKey)
-            this.rootKey = opts.preSharedKey;
+    public constructor(opts: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array } = {}) {
+        this.keyPair = crypto.ECDH.keyPair(opts.secretKey);
+        if (opts.rootKey)
+            this.rootKey = opts.rootKey;
         if (opts.remoteKey) {
             this._remoteKey = opts.remoteKey;
-            this.sendingChain = this.dhRatchet();
+            this.sendingChain = this.ratchetKeys();
         }
     }
 
@@ -76,46 +77,43 @@ export class Session {
      */
     public get remoteKey(): Uint8Array | undefined { return this._remoteKey; }
 
-    /**
-     * Set remote public key.
-     */
-    public setRemoteKey(key: Uint8Array): this {
+    private setRemoteKey(key: Uint8Array): this {
         this._remoteKey = key;
-        this.receivingChain = this.dhRatchet();
-        if (this.receivingCount > (EncryptedPayloadConstructor.maxCount - Session.skipLimit * 2))
+        this.receivingChain = this.ratchetKeys();
+        if (this.receivingCount > (EncryptedPayloadConstructor.maxCount - KeySession.skipLimit * 2))
             this.receivingCount = 0;
         this.previousCount = this.sendingCount;
         this.keyPair = crypto.ECDH.keyPair();
-        this.sendingChain = this.dhRatchet();
-        if (this.sendingCount > (EncryptedPayloadConstructor.maxCount - Session.skipLimit * 2))
+        this.sendingChain = this.ratchetKeys();
+        if (this.sendingCount > (EncryptedPayloadConstructor.maxCount - KeySession.skipLimit * 2))
             this.sendingCount = 0;
         return this;
     }
 
-    private dhRatchet(info?: Uint8Array): Uint8Array {
+    private ratchetKeys(info?: Uint8Array): Uint8Array {
         if (!this._remoteKey) throw new Error();
         const sharedKey = crypto.scalarMult(this.keyPair.secretKey, this._remoteKey);
         if (!this.rootKey)
             this.rootKey = crypto.hash(sharedKey);
-        const hashkey = crypto.hkdf(sharedKey, this.rootKey, info, Session.keyLength * 2);
-        this.rootKey = hashkey.slice(0, Session.keyLength);
-        return hashkey.slice(Session.keyLength);
+        const hashkey = crypto.hkdf(sharedKey, this.rootKey, info, KeySession.keyLength * 2);
+        this.rootKey = hashkey.slice(0, KeySession.keyLength);
+        return hashkey.slice(KeySession.keyLength);
     }
 
     private getSendingKey() {
         if (!this.sendingChain) throw new Error;
-        const out = Session.symmetricRatchet(this.sendingChain);
-        this.sendingChain = out[0];
+        const { chainKey, sharedKey } = KeySession.symmetricRatchet(this.sendingChain);
+        this.sendingChain = chainKey;
         this.sendingCount++;
-        return out[1];
+        return sharedKey;
     }
 
     private getReceivingKey() {
         if (!this.receivingChain) throw new Error();
-        const out = Session.symmetricRatchet(this.receivingChain);
-        this.receivingChain = out[0];
+        const { chainKey, sharedKey } = KeySession.symmetricRatchet(this.receivingChain);
+        this.receivingChain = chainKey;
         this.receivingCount++;
-        return out[1];
+        return sharedKey;
     }
 
     /**
@@ -124,17 +122,12 @@ export class Session {
      * @param message - The message as a Uint8Array.
      * @returns An EncryptedPayload or undefined if encryption fails.
      */
-    public encrypt(message: Uint8Array): EncryptedPayload | undefined {
-        try {
-            const key = this.getSendingKey();
-            if (this.sendingCount >= EncryptedPayloadConstructor.maxCount || this.previousCount >= EncryptedPayloadConstructor.maxCount) throw new Error();
-            const nonce = crypto.randomBytes(EncryptedPayloadConstructor.nonceLength);
-            const ciphertext = crypto.box.encrypt(message, nonce, key);
-            return new EncryptedPayloadConstructor(this.sendingCount, this.previousCount, this.keyPair.publicKey, nonce, ciphertext);
-        } catch (error) {
-            return undefined;
-        }
-
+    public encrypt(message: Uint8Array): EncryptedPayload {
+        const key = this.getSendingKey();
+        if (this.sendingCount >= EncryptedPayloadConstructor.maxCount || this.previousCount >= EncryptedPayloadConstructor.maxCount) throw new Error();
+        const nonce = crypto.randomBytes(EncryptedPayloadConstructor.nonceLength);
+        const ciphertext = crypto.box.encrypt(message, nonce, key);
+        return new EncryptedPayloadConstructor(this.sendingCount, this.previousCount, this.keyPair.publicKey, nonce, ciphertext);
     }
 
     /**
@@ -144,45 +137,43 @@ export class Session {
      * @returns The decrypted message as a Uint8Array, or undefined if decryption fails.
      */
     public decrypt(payload: Uint8Array | EncryptedPayload): Uint8Array | undefined {
-        try {
-            const encrypted = EncryptedPayload.from(payload);
-            const publicKey = encrypted.publicKey;
-            if (!verifyUint8Array(publicKey, this._remoteKey)) {
-                while (this.receivingCount < encrypted.previous)
-                    this.previousKeys.set(this.receivingCount, this.getReceivingKey());
-                this.setRemoteKey(publicKey);
-            }
-            let key: Uint8Array | undefined;
-            const count = encrypted.count;
-            if (this.receivingCount < count) {
-                let i = 0;
-                while (this.receivingCount < count - 1 && i < Session.skipLimit) {
-                    this.previousKeys.set(this.receivingCount, this.getReceivingKey());
-                }
-                key = this.getReceivingKey()
-            } else {
-                key = this.previousKeys.get(count);
-            }
-            if (!key) return undefined;
-            return crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key) ?? undefined;
-        } catch (error) {
-            return undefined;
+        const encrypted = EncryptedPayload.from(payload);
+        const publicKey = encrypted.publicKey;
+        if (!verifyUint8Array(publicKey, this._remoteKey)) {
+            while (this.receivingCount < encrypted.previous)
+                this.previousKeys.set(this.receivingCount, this.getReceivingKey());
+            this.setRemoteKey(publicKey);
         }
+        let key: Uint8Array | undefined;
+        const count = encrypted.count;
+        if (this.receivingCount < count) {
+            let i = 0;
+            while (this.receivingCount < count - 1 && i < KeySession.skipLimit) {
+                this.previousKeys.set(this.receivingCount, this.getReceivingKey());
+            }
+            key = this.getReceivingKey()
+        } else {
+            key = this.previousKeys.get(count);
+        }
+        if (!key) return undefined;
+        return crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key) ?? undefined;
     }
 
     /**
      * Export the state of the session;
      */
-    public export(): string {
-        return JSON.stringify({
+    public export(): ExportedKeySession {
+        return {
+            secretKey: encodeBase64(concatUint8Array(this.keyPair.secretKey)),
             remoteKey: encodeBase64(this._remoteKey),
             rootKey: encodeBase64(this.rootKey),
             sendingChain: encodeBase64(this.sendingChain),
             receivingChain: encodeBase64(this.receivingChain),
             sendingCount: this.sendingCount,
             receivingCount: this.receivingCount,
-            //previousCount: this.previousCount
-        });
+            previousCount: this.previousCount,
+            previousKeys: Array.from(this.previousKeys.entries())
+        };
     }
 
     /**
@@ -191,13 +182,16 @@ export class Session {
      * @param json string returned by `export()` method.
      * @returns session with the state parsed.
      */
-    public static import(json: string): Session {
-        const data = JSON.parse(json);
-        const session = new Session({ remoteKey: decodeBase64(data.remoteKey), preSharedKey: decodeBase64(data.rootKey) });
+    public static import(json: string): KeySession {
+        const data: ExportedKeySession = JSON.parse(json);
+        const session = new KeySession({ secretKey: decodeBase64(data.secretKey), rootKey: decodeBase64(data.rootKey) });
+        session._remoteKey = decodeBase64(data.remoteKey);
         session.sendingChain = decodeBase64(data.sendingChain);
         session.receivingChain = decodeBase64(data.receivingChain);
         session.sendingCount = data.sendingCount;
         session.receivingCount = data.receivingCount;
+        session.previousCount = data.previousCount;
+        session.previousKeys = new KeyMap(data.previousKeys);
         return session;
     }
 
@@ -208,8 +202,11 @@ export class Session {
     public static readonly keyLength = 32;
 
     private static symmetricRatchet(chain: Uint8Array, salt?: Uint8Array, info?: Uint8Array) {
-        const hash = crypto.hkdf(chain, salt ?? new Uint8Array(), info, Session.keyLength * 2);
-        return [new Uint8Array(hash.buffer, 0, Session.keyLength), new Uint8Array(hash.buffer, Session.keyLength)]
+        const hash = crypto.hkdf(chain, salt ?? new Uint8Array(), info, KeySession.keyLength * 2);
+        return {
+            chainKey: new Uint8Array(hash.buffer, 0, KeySession.keyLength),
+            sharedKey: new Uint8Array(hash.buffer, KeySession.keyLength)
+        }
     }
 }
 
@@ -254,22 +251,6 @@ export interface EncryptedPayload extends Encodable {
      */
     readonly ciphertext: Uint8Array;
 
-    /**
-     * The payload signature.
-     */
-    //readonly signature: Uint8Array | undefined;
-
-    /**
-     * Set the signature of the payload.
-     * 
-     * @param signature signature
-     */
-    //setSignature(signature: Uint8Array): this;
-
-    /**
-     * Return the payload without the signature.
-     */
-    //encodeUnsigned(): Uint8Array;
 
     /**
      * Serializes the payload into a Uint8Array for transport.
@@ -277,19 +258,7 @@ export interface EncryptedPayload extends Encodable {
     encode(): Uint8Array;
 
     /**
-     * Decodes the payload into a readable object format.
-     */
-    /*decode(): {
-        count: number;
-        previous: number;
-        publicKey: string;
-        nonce: string;
-        ciphertext: string;
-        //signature?: string;
-    };*/
-
-    /**
-     * Returns the payload as a UTF-8 string.
+     * Returns the payload as a Base64 string.
      */
     toString(): string;
 
@@ -312,13 +281,10 @@ export class EncryptedPayload {
 }
 
 class EncryptedPayloadConstructor implements EncryptedPayload {
-    //public static readonly signatureLength = crypto.EdDSA.signatureLength;
     public static readonly secretKeyLength = crypto.ECDH.secretKeyLength;
     public static readonly publicKeyLength = crypto.ECDH.publicKeyLength;
     public static readonly keyLength = crypto.box.keyLength;
     public static readonly nonceLength = crypto.box.nonceLength;
-    //public static readonly minPadLength = 6;
-    //public static readonly maxPadLength = 14;
     public static readonly maxCount = 65536 //32768;
     public static readonly countLength = 2;
 
@@ -337,7 +303,7 @@ class EncryptedPayloadConstructor implements EncryptedPayload {
         if (typeof arrays[1] === 'number')
             arrays[1] = numberToUint8Array(arrays[1], EncryptedPayloadConstructor.countLength);
         if (arrays.length > 1) {
-            arrays.unshift((typeof arrays[5] === 'number' ? numberToUint8Array(arrays[5]) : arrays[5]) ?? numberToUint8Array(Session.version));
+            arrays.unshift((typeof arrays[5] === 'number' ? numberToUint8Array(arrays[5]) : arrays[5]) ?? numberToUint8Array(KeySession.version));
         }
         this.raw = concatUint8Array(...arrays);
     }
@@ -356,33 +322,6 @@ class EncryptedPayloadConstructor implements EncryptedPayload {
 
     public get ciphertext() { return new Uint8Array(this.raw.buffer, Offsets.ciphertext.start); }
 
-    /*public get signature() { return this.signed ? new Uint8Array(this.raw.buffer, this.raw.length - EncryptedPayloadConstructor.signatureLength) : undefined }
-
-    public setSignature(signature: Uint8Array): this {
-        this.raw = concatUint8Array(this.raw, signature);
-        this.signed = true;
-        return this;
-    }
-
-    public encodeUnsigned(): Uint8Array {
-        return !this.signed ? this.raw : new Uint8Array(this.raw.buffer, 0, this.raw.length - EncryptedPayloadConstructor.signatureLength);
-    }
-
-    public encode(fixedLength?: number): Uint8Array {
-        if (fixedLength) {
-            var padStart = Math.floor(Math.random() * fixedLength - 2 - this.raw.length);
-            var padEnd = Math.floor(padStart + 2 + this.raw.length);
-        } else {
-            padStart = Math.floor(Math.random() * (EncryptedPayloadConstructor.maxPadLength - EncryptedPayloadConstructor.minPadLength) + 1) + EncryptedPayloadConstructor.minPadLength;
-            padEnd = Math.floor(Math.random() * (EncryptedPayloadConstructor.maxPadLength - EncryptedPayloadConstructor.minPadLength) + 1) + EncryptedPayloadConstructor.minPadLength;
-        }
-        return concatUint8Array(
-            randomBytes(padStart - 1).map((value) => value !== 255 ? value : (value - 1)),
-            new Uint8Array(1).fill(255), this.raw, new Uint8Array(1).fill(255),
-            randomBytes(padEnd).map((value) => value !== 255 ? value : (value - 1)),
-        );
-    }*/
-
     public encode(): Uint8Array {
         return this.raw;
     }
@@ -394,31 +333,17 @@ class EncryptedPayloadConstructor implements EncryptedPayload {
             previous: this.previous,
             publicKey: encodeBase64(this.publicKey),
             nonce: encodeBase64(this.nonce),
-            ciphertext: encodeUTF8(this.ciphertext),
-            //signature: encodeBase64(this.signature)
+            ciphertext: encodeBase64(this.ciphertext)
         }
     }
 
     public toString(): string {
-        return encodeUTF8(this.raw);
+        return encodeBase64(this.raw);
     }
 
     public toJSON(): string {
         return JSON.stringify(this.decode());
     }
-
-    /*public static unpad(array: Uint8Array, opts: { start: boolean, end: boolean } = { start: true, end: true }) {
-        let c: number;
-        if (opts.start) {
-            for (c = 0; c < array.length && array[c] !== 255; c++);
-            array = new Uint8Array(array.buffer, c);
-        }
-        if (opts.end) {
-            for (c = array.length; c > 0 && array[c] !== 255; c--);
-            array = new Uint8Array(array.buffer, 0, c);
-        }
-        return array;
-    }*/
 }
 
 class Offsets {
@@ -454,22 +379,7 @@ class Offsets {
 
 }
 
-interface KeyMap<K, T> {
-    get(key: K): T | undefined;
-    has(key: K): boolean;
-    set(key: K, value: T): this;
-    delete(key: K): boolean;
-}
-class KeyMap<K, T> {
-    constructor(iterable?: Iterable<readonly [K, T]>) {
-        return new KeyMapConstructor(iterable);
-    }
-}
-
-class KeyMapConstructor<K, T> extends Map<K, T> implements KeyMap<K, T> {
-    constructor(iterable?: Iterable<readonly [K, T]>) {
-        super(iterable);
-    }
+class KeyMap<K, T> extends Map<K, T> implements LocalStorage<K, T> {
 
     get(key: K): T | undefined {
         const out = super.get(key);
@@ -477,4 +387,5 @@ class KeyMapConstructor<K, T> extends Map<K, T> implements KeyMap<K, T> {
             throw new Error();
         return out;
     }
+
 }

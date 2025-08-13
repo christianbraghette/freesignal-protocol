@@ -106,7 +106,7 @@ class DatagramConstructor implements Encodable, Datagram {
     public constructor(data: Uint8Array | string | Datagram, receiver?: Uint8Array | string, protocol?: Protocols, payload?: Uint8Array | Encodable) {
         if (!receiver && !protocol && !payload) {
             if (data instanceof Uint8Array) {
-                const obj = encodeUTF8(data).split(',');
+                const obj = encodeUTF8(data).split(':');
                 this.id = obj[0];
                 this.version = parseInt(obj[1]);
                 this.sender = obj[2];
@@ -146,7 +146,7 @@ class DatagramConstructor implements Encodable, Datagram {
             this.receiver,
             Protocols.toCode(this.protocol).toString(),
             this.payload ? this.payload : undefined, this.createdAt
-        ].filter(x => x !== undefined).join(','));
+        ].filter(x => x !== undefined).join(':'));
     }
 
     public toString(): string {
@@ -208,7 +208,7 @@ class MessageConstructor implements Encodable, Message {
         } else if (!opts) {
             this.text = "";
         } else if (opts instanceof Uint8Array) {
-            const arr: Array<any> = encodeUTF8(opts).split(',');
+            const arr: Array<any> = encodeUTF8(opts).split(':');
             this.version = arr[0];
             this.text = arr[1] ?? "";
             this.group = arr[2];
@@ -251,7 +251,7 @@ class MessageConstructor implements Encodable, Message {
     }
 
     public encode(): Uint8Array {
-        return decodeUTF8([this.version, this.text, this.group, JSON.stringify(this.attachments || [])].join(','));
+        return decodeUTF8([this.version, this.text, this.group, JSON.stringify(this.attachments || [])].join(':'));
     }
 
     public toString(): string {
@@ -266,4 +266,14 @@ class MessageConstructor implements Encodable, Message {
             attachments: JSON.stringify(this.attachments)
         });
     }
+}
+
+type LocalStorageIterator<T> = Iterable<T>;
+
+export interface LocalStorage<K, T> {
+    set(key: K, value: T): this;
+    get(key: K): T | undefined;
+    has(key: K): boolean;
+    delete(key: K): boolean;
+    entries(): LocalStorageIterator<[K, T]>
 }

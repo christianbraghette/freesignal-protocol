@@ -18,170 +18,140 @@
  */
 
 import crypto from "./crypto";
-import { Session } from "./double-ratchet";
+import { LocalStorage } from "./data";
+import { KeySession } from "./double-ratchet";
 import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, verifyUint8Array } from "./utils";
-
-type BoxKeyPair = crypto.KeyPair;
-type SignKeyPair = crypto.KeyPair;
-
-type BundleStore = {
-    readonly SPK: Map<string, BoxKeyPair>,
-    readonly OPK: Map<string, BoxKeyPair>
-}
-
-type ExportedX3DH = [
-    SignKeyPair,
-    [
-        Array<[string, BoxKeyPair]>,
-        Array<[string, BoxKeyPair]>
-    ]
-];
 
 interface SynMessage {
     readonly version: number;
-    readonly PK: string;
-    readonly IK: string;
-    readonly SPK: string;
-    readonly SPKsign: string;
-    readonly OPK: string;
+    readonly publicKey: string;
+    readonly identityKey: string;
+    readonly signedPreKey: string;
+    readonly signature: string;
+    readonly onetimePreKey: string;
 }
 
 interface AckMessage {
     readonly version: number;
-    readonly PK: string;
-    readonly IK: string;
-    readonly EK: string;
-    readonly SPKhash: string;
-    readonly OPKhash: string;
-    readonly AD: string;
+    readonly publicKey: string;
+    readonly identityKey: string;
+    readonly ephemeralKey: string;
+    readonly signedPreKeyHash: string;
+    readonly onetimePreKeyHash: string;
+    readonly associatedData: string;
 }
 
 export interface Bundle {
     readonly version: number;
-    readonly PK: string;
-    readonly IK: string;
-    readonly SPK: string;
-    readonly SPKsign: string;
-    readonly OPK: string[];
+    readonly publicKey: string;
+    readonly identityKey: string;
+    readonly signedPreKey: string;
+    readonly signature: string;
+    readonly onetimePreKeyHash: string[];
 }
 
-export class X3DH {
+export class KeyExchange {
     public static readonly version = 1;
-    private static readonly hkdfInfo = decodeUTF8("freesignal/x3dh/" + X3DH.version);
+    private static readonly hkdfInfo = decodeUTF8("freesignal/x3dh/" + KeyExchange.version);
     private static readonly maxOPK = 10;
 
-    private readonly PK: SignKeyPair;
-    private readonly IK: BoxKeyPair;
-    private readonly bundleStore: BundleStore;
+    private readonly publicKey: crypto.KeyPair;
+    private readonly identityKey: crypto.KeyPair;
+    private readonly bundleStore: LocalStorage<string, crypto.KeyPair>;
 
-    public constructor(signKeyPair: SignKeyPair, instance?: [Iterable<[string, BoxKeyPair]>, Iterable<[string, BoxKeyPair]>]) {
-        this.PK = signKeyPair;
-        this.IK = crypto.ECDH.keyPair(crypto.hash(signKeyPair.secretKey));
-        this.bundleStore = {
-            SPK: new Map(instance ? instance[0] : []),
-            OPK: new Map(instance ? instance[1] : [])
-        };
+    public constructor(signKeyPair: crypto.KeyPair, bundleStore?: LocalStorage<string, crypto.KeyPair>) {
+        this.publicKey = signKeyPair;
+        this.identityKey = crypto.ECDH.keyPair(crypto.hash(signKeyPair.secretKey));
+        this.bundleStore = bundleStore ?? new Map<string, crypto.KeyPair>();
     }
 
-    private generateSPK(): {
-        SPK: BoxKeyPair,
-        SPKhash: Uint8Array
-    } {
-        const SPK = crypto.ECDH.keyPair();
-        const SPKhash = crypto.hash(SPK.publicKey);
-        this.bundleStore.SPK.set(encodeBase64(SPKhash), SPK);
-        return { SPK, SPKhash };
+    private generateSPK(): { signedPreKey: crypto.KeyPair, signedPreKeyHash: Uint8Array } {
+        const signedPreKey = crypto.ECDH.keyPair();
+        const signedPreKeyHash = crypto.hash(signedPreKey.publicKey);
+        this.bundleStore.set(encodeBase64(signedPreKeyHash), signedPreKey);
+        return { signedPreKey, signedPreKeyHash };
     }
 
-    private generateOPK(spkHash: Uint8Array): { OPK: BoxKeyPair, OPKhash: Uint8Array } {
-        const OPK = crypto.ECDH.keyPair();
-        const OPKhash = crypto.hash(OPK.publicKey);
-        this.bundleStore.OPK.set(encodeBase64(spkHash).concat(encodeBase64(OPKhash)), OPK);
-        return { OPK, OPKhash };
+    private generateOPK(spkHash: Uint8Array): { onetimePreKey: crypto.KeyPair, onetimePreKeyHash: Uint8Array } {
+        const onetimePreKey = crypto.ECDH.keyPair();
+        const onetimePreKeyHash = crypto.hash(onetimePreKey.publicKey);
+        this.bundleStore.set(encodeBase64(spkHash).concat(encodeBase64(onetimePreKeyHash)), onetimePreKey);
+        return { onetimePreKey, onetimePreKeyHash };
     }
 
     public generateBundle(length?: number): Bundle {
-        const { SPK, SPKhash } = this.generateSPK();
-        const OPK = new Array(length ?? X3DH.maxOPK).fill(0).map(() => this.generateOPK(SPKhash).OPK);
+        const { signedPreKey, signedPreKeyHash } = this.generateSPK();
+        const onetimePreKey = new Array(length ?? KeyExchange.maxOPK).fill(0).map(() => this.generateOPK(signedPreKeyHash).onetimePreKey);
         return {
-            version: X3DH.version,
-            PK: encodeBase64(this.PK.publicKey),
-            IK: encodeBase64(this.IK.publicKey),
-            SPK: encodeBase64(SPK.publicKey),
-            SPKsign: encodeBase64(crypto.EdDSA.sign(concatUint8Array(crypto.hash(this.IK.publicKey), SPKhash), this.PK.secretKey)),
-            OPK: OPK.map(opk => encodeBase64(opk.publicKey))
+            version: KeyExchange.version,
+            publicKey: encodeBase64(this.publicKey.publicKey),
+            identityKey: encodeBase64(this.identityKey.publicKey),
+            signedPreKey: encodeBase64(signedPreKey.publicKey),
+            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this.publicKey.secretKey)),
+            onetimePreKeyHash: onetimePreKey.map(opk => encodeBase64(opk.publicKey))
         }
     }
 
     public generateSyn(): SynMessage {
-        const { SPK, SPKhash } = this.generateSPK();
-        const { OPK } = this.generateOPK(SPKhash);
+        const { signedPreKey, signedPreKeyHash } = this.generateSPK();
+        const { onetimePreKey } = this.generateOPK(signedPreKeyHash);
         return {
-            version: X3DH.version,
-            PK: encodeBase64(this.PK.publicKey),
-            IK: encodeBase64(this.IK.publicKey),
-            SPK: encodeBase64(SPK.publicKey),
-            SPKsign: encodeBase64(crypto.EdDSA.sign(concatUint8Array(crypto.hash(this.IK.publicKey), SPKhash), this.PK.secretKey)),
-            OPK: encodeBase64(OPK.publicKey)
+            version: KeyExchange.version,
+            publicKey: encodeBase64(this.publicKey.publicKey),
+            identityKey: encodeBase64(this.identityKey.publicKey),
+            signedPreKey: encodeBase64(signedPreKey.publicKey),
+            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this.publicKey.secretKey)),
+            onetimePreKey: encodeBase64(onetimePreKey.publicKey)
         }
     }
 
-    public digestSyn(message: SynMessage, encrypter?: (msg: Uint8Array, key: Uint8Array) => Uint8Array): { rootKey: Uint8Array, ackMessage: AckMessage } {
-        const EK = crypto.ECDH.keyPair();
-        const SPK = decodeBase64(message.SPK);
-        const IK = decodeBase64(message.IK);
-        const OPK = message.OPK ? decodeBase64(message.OPK) : undefined;
-        const spkHash = crypto.hash(SPK);
-        const opkHash = OPK ? crypto.hash(OPK) : new Uint8Array();
+    public digestSyn(message: SynMessage): { session: KeySession, ackMessage: AckMessage } {
+        const ephemeralKey = crypto.ECDH.keyPair();
+        const signedPreKey = decodeBase64(message.signedPreKey);
+        const identityKey = decodeBase64(message.identityKey);
+        const onetimePreKey = message.onetimePreKey ? decodeBase64(message.onetimePreKey) : undefined;
+        const signedPreKeyHash = crypto.hash(signedPreKey);
+        const onetimePreKeyHash = onetimePreKey ? crypto.hash(onetimePreKey) : new Uint8Array();
         const rootKey = crypto.hkdf(new Uint8Array([
-            ...crypto.scalarMult(this.IK.secretKey, SPK),
-            ...crypto.scalarMult(EK.secretKey, IK),
-            ...crypto.scalarMult(EK.secretKey, SPK),
-            ...OPK ? crypto.scalarMult(EK.secretKey, OPK) : new Uint8Array()
-        ]), new Uint8Array(Session.rootKeyLength).fill(0), X3DH.hkdfInfo, Session.rootKeyLength)
-        if (!encrypter) encrypter = (msg, key) => crypto.box.encrypt(msg, new Uint8Array(crypto.box.nonceLength).fill(0), key);
+            ...crypto.scalarMult(this.identityKey.secretKey, signedPreKey),
+            ...crypto.scalarMult(ephemeralKey.secretKey, identityKey),
+            ...crypto.scalarMult(ephemeralKey.secretKey, signedPreKey),
+            ...onetimePreKey ? crypto.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
+        ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
+        const session = new KeySession({ secretKey: this.identityKey.secretKey, remoteKey: identityKey, rootKey });
+        const cyphertext = session.encrypt(concatUint8Array(crypto.hash(this.identityKey.publicKey), crypto.hash(identityKey)));
+        if (!cyphertext) throw new Error();
         return {
-            rootKey,
+            session,
             ackMessage: {
-                version: X3DH.version,
-                PK: encodeBase64(this.PK.publicKey),
-                IK: encodeBase64(this.IK.publicKey),
-                EK: encodeBase64(EK.publicKey),
-                SPKhash: encodeBase64(spkHash),
-                OPKhash: encodeBase64(opkHash),
-                AD: encodeBase64(encrypter(concatUint8Array(crypto.hash(this.IK.publicKey), crypto.hash(IK)), rootKey))
+                version: KeyExchange.version,
+                publicKey: encodeBase64(this.publicKey.publicKey),
+                identityKey: encodeBase64(this.identityKey.publicKey),
+                ephemeralKey: encodeBase64(ephemeralKey.publicKey),
+                signedPreKeyHash: encodeBase64(signedPreKeyHash),
+                onetimePreKeyHash: encodeBase64(onetimePreKeyHash),
+                associatedData: encodeBase64(cyphertext.encode())
             }
         }
     }
 
-    public digestAck(message: AckMessage, verifier?: (ciphertext: Uint8Array, key: Uint8Array) => boolean): Uint8Array | undefined {
-        const SPK = this.bundleStore.SPK.get(message.SPKhash);
-        const OPK = this.bundleStore.OPK.get(message.SPKhash.concat(message.OPKhash));
-        if (!SPK || !OPK || !message.IK || !message.EK) return;
-        const IK = decodeBase64(message.IK);
-        const EK = decodeBase64(message.EK);
+    public digestAck(message: AckMessage): { session: KeySession, cleartext: Uint8Array } {
+        const signedPreKey = this.bundleStore.get(message.signedPreKeyHash);
+        const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
+        const onetimePreKey = this.bundleStore.get(hash);
+        if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey) throw new Error("ACK message malformed");
+        if (!this.bundleStore.delete(hash)) throw new Error("Bundle store deleting error");
+        const identityKey = decodeBase64(message.identityKey);
+        const ephemeralKey = decodeBase64(message.ephemeralKey);
         const rootKey = crypto.hkdf(new Uint8Array([
-            ...crypto.scalarMult(SPK.secretKey, IK),
-            ...crypto.scalarMult(this.IK.secretKey, EK),
-            ...crypto.scalarMult(SPK.secretKey, EK),
-            ...OPK ? crypto.scalarMult(OPK.secretKey, EK) : new Uint8Array()
-        ]), new Uint8Array(Session.rootKeyLength).fill(0), X3DH.hkdfInfo, Session.rootKeyLength);
-        if (!verifier) verifier = (ciphertext, key) => verifyUint8Array(crypto.box.decrypt(ciphertext, new Uint8Array(crypto.box.nonceLength).fill(0), key), concatUint8Array(crypto.hash(IK), crypto.hash(this.IK.publicKey)));
-        if (!verifier(decodeBase64(message.AD), rootKey)) return;
-        return rootKey;
-    }
-
-    public export(): ExportedX3DH {
-        return [
-            this.IK,
-            [
-                Array.from(this.bundleStore.SPK.entries()),
-                Array.from(this.bundleStore.OPK.entries())
-            ]
-        ]
-    }
-
-    public static import(input: ExportedX3DH): X3DH {
-        return new X3DH(...input);
+            ...crypto.scalarMult(signedPreKey.secretKey, identityKey),
+            ...crypto.scalarMult(this.identityKey.secretKey, ephemeralKey),
+            ...crypto.scalarMult(signedPreKey.secretKey, ephemeralKey),
+            ...onetimePreKey ? crypto.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
+        ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
+        const session = new KeySession({ secretKey: this.identityKey.secretKey, rootKey })
+        const cleartext = session.decrypt(decodeBase64(message.associatedData));
+        if (!cleartext) throw new Error("Error decrypting ACK message");
+        return { session, cleartext };
     }
 }
