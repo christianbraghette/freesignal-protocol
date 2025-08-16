@@ -26,11 +26,17 @@ import {
     kmac256
 } from 'js-sha3';
 import nacl from 'tweetnacl';
-import { v4 as uuidv4 } from 'uuid';
+import { stringify, parse, v4 as uuidv4 } from 'uuid';
 import { decodeUTF8 } from './utils';
 
 export type HashAlgorithms = 'sha224' | 'sha256' | 'sha384' | 'sha512';
 export type HmacAlgorithms = 'kmac128' | 'kmac256';
+
+interface UUIDv4 {
+    toString(): string
+    toJSON(): string
+    toBuffer(): Uint8Array
+}
 
 export interface Crypto {
     hash(message: Uint8Array, algorithm?: HashAlgorithms): Uint8Array;
@@ -40,10 +46,10 @@ export interface Crypto {
     readonly box: Crypto.box;
     readonly ECDH: Crypto.ECDH;
     readonly EdDSA: Crypto.EdDSA;
+    readonly UUID: Crypto.UUID;
 
     randomBytes(n: number): Uint8Array;
     scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array;
-    generateId(): Crypto.UUID;
 }
 export namespace Crypto {
     export type KeyPair = {
@@ -80,9 +86,9 @@ export namespace Crypto {
     }
 
     export interface UUID {
-        toString(): string
-        toJSON(): string
-        toBuffer(): Uint8Array
+        generate(): UUIDv4;
+        stringify(arr: Uint8Array, offset?: number): string;
+        parse(uuid: string): Uint8Array;
     }
 }
 
@@ -123,16 +129,13 @@ class CryptoConstructor implements Crypto {
     readonly box = new CryptoConstructor.box();
     readonly ECDH = new CryptoConstructor.ECDH();
     readonly EdDSA = new CryptoConstructor.EdDSA();
+    readonly UUID = new CryptoConstructor.UUID();
 
     scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array {
         return nacl.scalarMult(n, p);
     }
 
     randomBytes = nacl.randomBytes;
-
-    generateId(): Crypto.UUID { 
-        return new CryptoConstructor.UUID();
-    }
 }
 namespace CryptoConstructor {
 
@@ -188,7 +191,21 @@ namespace CryptoConstructor {
         }
     }
 
-    export class UUID implements Crypto.UUID {
+    export class UUID {
+        generate(): UUIDv4 {
+            return new UUIDv4();
+        }
+
+        stringify(arr: Uint8Array, offset?: number): string {
+            return stringify(arr, offset);
+        }
+
+        parse(uuid: string): Uint8Array {
+            return parse(uuid);
+        }
+    }
+
+    class UUIDv4 implements UUIDv4 {
         private value: string;
 
         constructor() {

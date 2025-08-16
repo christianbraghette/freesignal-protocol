@@ -18,7 +18,8 @@
  */
 
 import crypto from "./crypto";
-import { Encodable, LocalStorage } from "./data";
+import { LocalStorage } from "./data";
+import { Encodable } from "./type";
 import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "./utils";
 
 type ExportedKeySession = {

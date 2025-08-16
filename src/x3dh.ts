@@ -22,7 +22,7 @@ import { LocalStorage } from "./data";
 import { KeySession } from "./double-ratchet";
 import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, verifyUint8Array } from "./utils";
 
-interface SynMessage {
+interface ExchangeKeyData {
     readonly version: number;
     readonly publicKey: string;
     readonly identityKey: string;
@@ -31,7 +31,7 @@ interface SynMessage {
     readonly onetimePreKey: string;
 }
 
-interface AckMessage {
+interface SynMessage {
     readonly version: number;
     readonly publicKey: string;
     readonly identityKey: string;
@@ -41,7 +41,7 @@ interface AckMessage {
     readonly associatedData: string;
 }
 
-export interface Bundle {
+export interface ExchangeKeyBundle {
     readonly version: number;
     readonly publicKey: string;
     readonly identityKey: string;
@@ -55,15 +55,19 @@ export class KeyExchange {
     private static readonly hkdfInfo = decodeUTF8("freesignal/x3dh/" + KeyExchange.version);
     private static readonly maxOPK = 10;
 
-    private readonly publicKey: crypto.KeyPair;
-    private readonly identityKey: crypto.KeyPair;
+    private readonly _publicKey: crypto.KeyPair;
+    private readonly _identityKey: crypto.KeyPair;
     private readonly bundleStore: LocalStorage<string, crypto.KeyPair>;
 
     public constructor(signKeyPair: crypto.KeyPair, bundleStore?: LocalStorage<string, crypto.KeyPair>) {
-        this.publicKey = signKeyPair;
-        this.identityKey = crypto.ECDH.keyPair(crypto.hash(signKeyPair.secretKey));
+        this._publicKey = signKeyPair;
+        this._identityKey = crypto.ECDH.keyPair(crypto.hash(signKeyPair.secretKey));
         this.bundleStore = bundleStore ?? new Map<string, crypto.KeyPair>();
     }
+
+    public get publicKey() { return this._publicKey.publicKey; }
+
+    public get identityKey() { return this._identityKey.publicKey; }
 
     private generateSPK(): { signedPreKey: crypto.KeyPair, signedPreKeyHash: Uint8Array } {
         const signedPreKey = crypto.ECDH.keyPair();
@@ -79,33 +83,33 @@ export class KeyExchange {
         return { onetimePreKey, onetimePreKeyHash };
     }
 
-    public generateBundle(length?: number): Bundle {
+    public generateBundle(length?: number): ExchangeKeyBundle {
         const { signedPreKey, signedPreKeyHash } = this.generateSPK();
         const onetimePreKey = new Array(length ?? KeyExchange.maxOPK).fill(0).map(() => this.generateOPK(signedPreKeyHash).onetimePreKey);
         return {
             version: KeyExchange.version,
-            publicKey: encodeBase64(this.publicKey.publicKey),
-            identityKey: encodeBase64(this.identityKey.publicKey),
+            publicKey: encodeBase64(this._publicKey.publicKey),
+            identityKey: encodeBase64(this._identityKey.publicKey),
             signedPreKey: encodeBase64(signedPreKey.publicKey),
-            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this.publicKey.secretKey)),
+            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._publicKey.secretKey)),
             onetimePreKeyHash: onetimePreKey.map(opk => encodeBase64(opk.publicKey))
         }
     }
 
-    public generateSyn(): SynMessage {
+    public generateData(): ExchangeKeyData {
         const { signedPreKey, signedPreKeyHash } = this.generateSPK();
         const { onetimePreKey } = this.generateOPK(signedPreKeyHash);
         return {
             version: KeyExchange.version,
-            publicKey: encodeBase64(this.publicKey.publicKey),
-            identityKey: encodeBase64(this.identityKey.publicKey),
+            publicKey: encodeBase64(this._publicKey.publicKey),
+            identityKey: encodeBase64(this._identityKey.publicKey),
             signedPreKey: encodeBase64(signedPreKey.publicKey),
-            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this.publicKey.secretKey)),
+            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._publicKey.secretKey)),
             onetimePreKey: encodeBase64(onetimePreKey.publicKey)
         }
     }
 
-    public digestSyn(message: SynMessage): { session: KeySession, ackMessage: AckMessage } {
+    public digestData(message: ExchangeKeyData): { session: KeySession, message: SynMessage } {
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = decodeBase64(message.signedPreKey);
         const identityKey = decodeBase64(message.identityKey);
@@ -113,20 +117,20 @@ export class KeyExchange {
         const signedPreKeyHash = crypto.hash(signedPreKey);
         const onetimePreKeyHash = onetimePreKey ? crypto.hash(onetimePreKey) : new Uint8Array();
         const rootKey = crypto.hkdf(new Uint8Array([
-            ...crypto.scalarMult(this.identityKey.secretKey, signedPreKey),
+            ...crypto.scalarMult(this._identityKey.secretKey, signedPreKey),
             ...crypto.scalarMult(ephemeralKey.secretKey, identityKey),
             ...crypto.scalarMult(ephemeralKey.secretKey, signedPreKey),
             ...onetimePreKey ? crypto.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
-        const session = new KeySession({ secretKey: this.identityKey.secretKey, remoteKey: identityKey, rootKey });
-        const cyphertext = session.encrypt(concatUint8Array(crypto.hash(this.identityKey.publicKey), crypto.hash(identityKey)));
+        const session = new KeySession({ remoteKey: identityKey, rootKey });
+        const cyphertext = session.encrypt(concatUint8Array(crypto.hash(this._identityKey.publicKey), crypto.hash(identityKey)));
         if (!cyphertext) throw new Error();
         return {
             session,
-            ackMessage: {
+            message: {
                 version: KeyExchange.version,
-                publicKey: encodeBase64(this.publicKey.publicKey),
-                identityKey: encodeBase64(this.identityKey.publicKey),
+                publicKey: encodeBase64(this._publicKey.publicKey),
+                identityKey: encodeBase64(this._identityKey.publicKey),
                 ephemeralKey: encodeBase64(ephemeralKey.publicKey),
                 signedPreKeyHash: encodeBase64(signedPreKeyHash),
                 onetimePreKeyHash: encodeBase64(onetimePreKeyHash),
@@ -135,7 +139,7 @@ export class KeyExchange {
         }
     }
 
-    public digestAck(message: AckMessage): { session: KeySession, cleartext: Uint8Array } {
+    public digestSyn(message: SynMessage): { session: KeySession, cleartext: Uint8Array } {
         const signedPreKey = this.bundleStore.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
         const onetimePreKey = this.bundleStore.get(hash);
@@ -145,13 +149,15 @@ export class KeyExchange {
         const ephemeralKey = decodeBase64(message.ephemeralKey);
         const rootKey = crypto.hkdf(new Uint8Array([
             ...crypto.scalarMult(signedPreKey.secretKey, identityKey),
-            ...crypto.scalarMult(this.identityKey.secretKey, ephemeralKey),
+            ...crypto.scalarMult(this._identityKey.secretKey, ephemeralKey),
             ...crypto.scalarMult(signedPreKey.secretKey, ephemeralKey),
             ...onetimePreKey ? crypto.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
-        const session = new KeySession({ secretKey: this.identityKey.secretKey, rootKey })
+        const session = new KeySession({ secretKey: this._identityKey.secretKey, rootKey })
         const cleartext = session.decrypt(decodeBase64(message.associatedData));
         if (!cleartext) throw new Error("Error decrypting ACK message");
+        if (!verifyUint8Array(cleartext, concatUint8Array(crypto.hash(identityKey), crypto.hash(this._identityKey.publicKey))))
+            throw new Error("Error verifing Associated Data");
         return { session, cleartext };
     }
 }

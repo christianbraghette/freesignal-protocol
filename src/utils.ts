@@ -130,6 +130,7 @@ export function verifyUint8Array(a?: Uint8Array, ...b: (Uint8Array | undefined)[
  * @returns A Uint8Array
  */
 export function concatUint8Array(...arrays: Uint8Array[]) {
+    //arrays = arrays.filter(array => array != undefined);
     const out = new Uint8Array(arrays.map(value => value.length).reduce((prev, curr) => prev + curr));
     let offset = 0;
     arrays.forEach(array => {
