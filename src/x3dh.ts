@@ -20,7 +20,7 @@
 import crypto from "./crypto";
 import { LocalStorage } from "./data";
 import { KeySession } from "./double-ratchet";
-import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, verifyUint8Array } from "./utils";
+import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, verifyUint8Array } from "./utils";
 
 interface ExchangeKeyData {
     readonly version: number;
@@ -55,17 +55,17 @@ export class KeyExchange {
     private static readonly hkdfInfo = decodeUTF8("freesignal/x3dh/" + KeyExchange.version);
     private static readonly maxOPK = 10;
 
-    private readonly _publicKey: crypto.KeyPair;
+    private readonly _signatureKey: crypto.KeyPair;
     private readonly _identityKey: crypto.KeyPair;
     private readonly bundleStore: LocalStorage<string, crypto.KeyPair>;
 
-    public constructor(signKeyPair: crypto.KeyPair, bundleStore?: LocalStorage<string, crypto.KeyPair>) {
-        this._publicKey = signKeyPair;
-        this._identityKey = crypto.ECDH.keyPair(crypto.hash(signKeyPair.secretKey));
+    public constructor(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, crypto.KeyPair>) {
+        this._signatureKey = crypto.EdDSA.keyPair(signSecretKey);
+        this._identityKey = crypto.ECDH.keyPair(boxSecretKey);
         this.bundleStore = bundleStore ?? new Map<string, crypto.KeyPair>();
     }
 
-    public get publicKey() { return this._publicKey.publicKey; }
+    public get signatureKey() { return this._signatureKey.publicKey; }
 
     public get identityKey() { return this._identityKey.publicKey; }
 
@@ -88,10 +88,10 @@ export class KeyExchange {
         const onetimePreKey = new Array(length ?? KeyExchange.maxOPK).fill(0).map(() => this.generateOPK(signedPreKeyHash).onetimePreKey);
         return {
             version: KeyExchange.version,
-            publicKey: encodeBase64(this._publicKey.publicKey),
+            publicKey: encodeBase64(this._signatureKey.publicKey),
             identityKey: encodeBase64(this._identityKey.publicKey),
             signedPreKey: encodeBase64(signedPreKey.publicKey),
-            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._publicKey.secretKey)),
+            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._signatureKey.secretKey)),
             onetimePreKeyHash: onetimePreKey.map(opk => encodeBase64(opk.publicKey))
         }
     }
@@ -101,10 +101,10 @@ export class KeyExchange {
         const { onetimePreKey } = this.generateOPK(signedPreKeyHash);
         return {
             version: KeyExchange.version,
-            publicKey: encodeBase64(this._publicKey.publicKey),
+            publicKey: encodeBase64(this._signatureKey.publicKey),
             identityKey: encodeBase64(this._identityKey.publicKey),
             signedPreKey: encodeBase64(signedPreKey.publicKey),
-            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._publicKey.secretKey)),
+            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._signatureKey.secretKey)),
             onetimePreKey: encodeBase64(onetimePreKey.publicKey)
         }
     }
@@ -129,7 +129,7 @@ export class KeyExchange {
             session,
             message: {
                 version: KeyExchange.version,
-                publicKey: encodeBase64(this._publicKey.publicKey),
+                publicKey: encodeBase64(this._signatureKey.publicKey),
                 identityKey: encodeBase64(this._identityKey.publicKey),
                 ephemeralKey: encodeBase64(ephemeralKey.publicKey),
                 signedPreKeyHash: encodeBase64(signedPreKeyHash),

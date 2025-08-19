@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import crypto from "./crypto";
-
 export interface Encodable {
     encode(): Uint8Array;
     toString(): string;
@@ -32,7 +30,7 @@ export namespace Encodable {
     }
 }
 
-export class IdentityKey extends Uint8Array {
+/*export class IdentityKey extends Uint8Array {
     public static keyLength = crypto.ECDH.publicKeyLength + crypto.EdDSA.publicKeyLength;
 
     public readonly secretKey?: Uint8Array;
@@ -91,6 +89,20 @@ export class IdentityKey extends Uint8Array {
         return false;
     }
 
+    public getKeyPair(): crypto.KeyPair | undefined {
+        return this.secretKey ? {
+            secretKey: this.secretKey,
+            publicKey: this.publicKey
+        } : undefined;
+    }
+
+    public getSignKeyPair(): crypto.KeyPair | undefined {
+        return this.signSecretKey ? {
+            secretKey: this.signSecretKey,
+            publicKey: this.signPublicKey
+        } : undefined;
+    }
+
     public static from(identityKey: IdentityKey | Uint8Array): IdentityKey {
         return new IdentityKey(identityKey);
     }
@@ -99,6 +111,14 @@ export class IdentityKey extends Uint8Array {
 export class PrivateIdentityKey extends IdentityKey {
     declare readonly secretKey: Uint8Array;
     declare readonly signSecretKey: Uint8Array;
+
+    public getKeyPair(): crypto.KeyPair {
+        return super.getKeyPair()!;
+    }
+
+    public getSignKeyPair(): crypto.KeyPair {
+        return super.getSignKeyPair()!;
+    }
 
     public export(): IdentityKey {
         return new IdentityKey(this.publicKey, this.signPublicKey);
@@ -109,4 +129,4 @@ export class PrivateIdentityKey extends IdentityKey {
             return true;
         return false;
     }
-}
+}*/

@@ -43,6 +43,7 @@ export interface Crypto {
     hmac(key: Uint8Array, message: Uint8Array, length?: number, algorithm?: HmacAlgorithms): Uint8Array
     hkdf(key: Uint8Array, salt: Uint8Array, info?: Uint8Array | string, length?: number): Uint8Array;
 
+    readonly KeyPair: typeof Crypto.KeyPair;
     readonly box: Crypto.box;
     readonly ECDH: Crypto.ECDH;
     readonly EdDSA: Crypto.EdDSA;
@@ -53,8 +54,11 @@ export interface Crypto {
 }
 export namespace Crypto {
     export type KeyPair = {
-        publicKey: Uint8Array;
-        secretKey: Uint8Array;
+        readonly publicKey: Uint8Array;
+        readonly secretKey: Uint8Array;
+    }
+    export declare namespace KeyPair {
+        export function isKeyPair(obj: any): boolean;
     }
 
     export interface box {
@@ -124,6 +128,14 @@ class CryptoConstructor implements Crypto {
 
     hkdf(key: Uint8Array, salt: Uint8Array, info?: Uint8Array | string, length: number = 32): Uint8Array {
         return new Uint8Array(kmac256.digest(key, salt, length * 8, info ?? new Uint8Array()));
+    }
+
+    readonly KeyPair = {
+        isKeyPair(obj: any): boolean {
+            if (typeof obj === 'object' && obj.publicKey && obj.secretKey)
+                return true;
+            return false;
+        }
     }
 
     readonly box = new CryptoConstructor.box();

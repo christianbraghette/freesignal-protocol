@@ -41,6 +41,6 @@ export function createKeySession(opts?: { secretKey?: Uint8Array, remoteKey?: Ui
  * @param bundleStore 
  * @returns A new X3DH session.
  */
-export function createKeyExchange(signKeyPair: crypto.KeyPair, bundleStore?: LocalStorage<string, crypto.KeyPair>): KeyExchange {
-    return new KeyExchange(signKeyPair, bundleStore);
+export function createKeyExchange(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, crypto.KeyPair>): KeyExchange {
+    return new KeyExchange(signSecretKey, boxSecretKey, bundleStore);
 }

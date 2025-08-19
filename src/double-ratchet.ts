@@ -19,7 +19,7 @@
 
 import crypto from "./crypto";
 import { LocalStorage } from "./data";
-import { Encodable } from "./type";
+import { Encodable } from "./types";
 import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "./utils";
 
 type ExportedKeySession = {
@@ -303,8 +303,11 @@ class EncryptedPayloadConstructor implements EncryptedPayload {
             arrays[0] = numberToUint8Array(arrays[0], EncryptedPayloadConstructor.countLength);
         if (typeof arrays[1] === 'number')
             arrays[1] = numberToUint8Array(arrays[1], EncryptedPayloadConstructor.countLength);
-        if (arrays.length > 1) {
-            arrays.unshift((typeof arrays[5] === 'number' ? numberToUint8Array(arrays[5]) : arrays[5]) ?? numberToUint8Array(KeySession.version));
+        if (arrays.length === 6) {
+            arrays.unshift(typeof arrays[5] === 'number' ? numberToUint8Array(arrays[5]) : arrays[5]);
+            arrays.pop();
+        } else if (arrays.length > 1) {
+            arrays.unshift(numberToUint8Array(KeySession.version));
         }
         this.raw = concatUint8Array(...arrays);
     }
