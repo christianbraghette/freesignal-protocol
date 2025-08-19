@@ -34,11 +34,11 @@ export namespace Encodable {
 type LocalStorageIterator<T> = Iterable<T>;
 
 export interface LocalStorage<K, T> {
-    set(key: K, value: T): this;
-    get(key: K): T | undefined;
-    has(key: K): boolean;
-    delete(key: K): boolean;
-    entries(): LocalStorageIterator<[K, T]>
+    set(key: K, value: T): Promise<this>;
+    get(key: K): Promise<T | undefined>;
+    has(key: K): Promise<boolean>;
+    delete(key: K): Promise<boolean>;
+    entries(): Promise<LocalStorageIterator<[K, T]>>;
 }
 
 export interface KeyExchangeData {

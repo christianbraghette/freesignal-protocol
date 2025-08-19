@@ -34,7 +34,7 @@ export class KeyExchange {
     public constructor(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, crypto.KeyPair>) {
         this._signatureKey = crypto.EdDSA.keyPair(signSecretKey);
         this._identityKey = crypto.ECDH.keyPair(boxSecretKey);
-        this.bundleStore = bundleStore ?? new Map<string, crypto.KeyPair>();
+        this.bundleStore = bundleStore ?? new AsyncMap<string, crypto.KeyPair>();
     }
 
     public get signatureKey() { return this._signatureKey.publicKey; }
@@ -84,7 +84,7 @@ export class KeyExchange {
     public digestData(message: KeyExchangeData): { session: KeySession, message: KeyExchangeSynMessage } {
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = decodeBase64(message.signedPreKey);
-        if (!crypto.EdDSA.verify(signedPreKey, decodeBase64(message.signature), decodeBase64(message.publicKey)))
+        if (!crypto.EdDSA.verify(crypto.hash(signedPreKey), decodeBase64(message.signature), decodeBase64(message.publicKey)))
             throw new Error("Signature verification failed");
         const identityKey = decodeBase64(message.identityKey);
         const onetimePreKey = message.onetimePreKey ? decodeBase64(message.onetimePreKey) : undefined;
@@ -113,10 +113,10 @@ export class KeyExchange {
         }
     }
 
-    public digestMessage(message: KeyExchangeSynMessage): { session: KeySession, cleartext: Uint8Array } {
-        const signedPreKey = this.bundleStore.get(message.signedPreKeyHash);
+    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession; cleartext: Uint8Array; }> {
+        const signedPreKey = await this.bundleStore.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
-        const onetimePreKey = this.bundleStore.get(hash);
+        const onetimePreKey = await this.bundleStore.get(hash);
         if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey) throw new Error("ACK message malformed");
         if (!this.bundleStore.delete(hash)) throw new Error("Bundle store deleting error");
         const identityKey = decodeBase64(message.identityKey);
@@ -133,5 +133,34 @@ export class KeyExchange {
         if (!verifyUint8Array(cleartext, concatUint8Array(crypto.hash(identityKey), crypto.hash(this._identityKey.publicKey))))
             throw new Error("Error verifing Associated Data");
         return { session, cleartext };
+    }
+}
+
+class AsyncMap<K, V> implements LocalStorage<K, V> {
+    private map: Map<K, V>;
+
+    constructor() {
+        this.map = new Map<K, V>();
+    }
+
+    async set(key: K, value: V): Promise<this> {
+        this.map.set(key, value);
+        return this;
+    }
+
+    async get(key: K): Promise<V | undefined> {
+        return this.map.get(key);
+    }
+
+    async has(key: K): Promise<boolean> {
+        return this.map.has(key);
+    }
+
+    async delete(key: K): Promise<boolean> {
+        return this.map.delete(key);
+    }
+
+    async entries(): Promise<MapIterator<[K, V]>> {
+        return this.map.entries();
     }
 }

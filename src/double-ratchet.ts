@@ -18,7 +18,7 @@
  */
 
 import crypto from "./crypto";
-import { Encodable, LocalStorage } from "./types";
+import { Encodable } from "./types";
 import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "./utils";
 
 type ExportedKeySession = {
@@ -382,7 +382,7 @@ class Offsets {
 
 }
 
-class KeyMap<K, T> extends Map<K, T> implements LocalStorage<K, T> {
+class KeyMap<K, T> extends Map<K, T> {
 
     get(key: K): T | undefined {
         const out = super.get(key);
