@@ -18,37 +18,9 @@
  */
 
 import crypto from "./crypto";
-import { LocalStorage } from "./data";
+import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage } from "./types";
 import { KeySession } from "./double-ratchet";
 import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, verifyUint8Array } from "./utils";
-
-interface ExchangeKeyData {
-    readonly version: number;
-    readonly publicKey: string;
-    readonly identityKey: string;
-    readonly signedPreKey: string;
-    readonly signature: string;
-    readonly onetimePreKey: string;
-}
-
-interface SynMessage {
-    readonly version: number;
-    readonly publicKey: string;
-    readonly identityKey: string;
-    readonly ephemeralKey: string;
-    readonly signedPreKeyHash: string;
-    readonly onetimePreKeyHash: string;
-    readonly associatedData: string;
-}
-
-export interface ExchangeKeyBundle {
-    readonly version: number;
-    readonly publicKey: string;
-    readonly identityKey: string;
-    readonly signedPreKey: string;
-    readonly signature: string;
-    readonly onetimePreKeyHash: string[];
-}
 
 export class KeyExchange {
     public static readonly version = 1;
@@ -83,7 +55,7 @@ export class KeyExchange {
         return { onetimePreKey, onetimePreKeyHash };
     }
 
-    public generateBundle(length?: number): ExchangeKeyBundle {
+    public generateBundle(length?: number): KeyExchangeDataBundle {
         const { signedPreKey, signedPreKeyHash } = this.generateSPK();
         const onetimePreKey = new Array(length ?? KeyExchange.maxOPK).fill(0).map(() => this.generateOPK(signedPreKeyHash).onetimePreKey);
         return {
@@ -92,11 +64,11 @@ export class KeyExchange {
             identityKey: encodeBase64(this._identityKey.publicKey),
             signedPreKey: encodeBase64(signedPreKey.publicKey),
             signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._signatureKey.secretKey)),
-            onetimePreKeyHash: onetimePreKey.map(opk => encodeBase64(opk.publicKey))
+            onetimePreKey: onetimePreKey.map(opk => encodeBase64(opk.publicKey))
         }
     }
 
-    public generateData(): ExchangeKeyData {
+    public generateData(): KeyExchangeData {
         const { signedPreKey, signedPreKeyHash } = this.generateSPK();
         const { onetimePreKey } = this.generateOPK(signedPreKeyHash);
         return {
@@ -109,9 +81,11 @@ export class KeyExchange {
         }
     }
 
-    public digestData(message: ExchangeKeyData): { session: KeySession, message: SynMessage } {
+    public digestData(message: KeyExchangeData): { session: KeySession, message: KeyExchangeSynMessage } {
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = decodeBase64(message.signedPreKey);
+        if (!crypto.EdDSA.verify(signedPreKey, decodeBase64(message.signature), decodeBase64(message.publicKey)))
+            throw new Error("Signature verification failed");
         const identityKey = decodeBase64(message.identityKey);
         const onetimePreKey = message.onetimePreKey ? decodeBase64(message.onetimePreKey) : undefined;
         const signedPreKeyHash = crypto.hash(signedPreKey);
@@ -139,7 +113,7 @@ export class KeyExchange {
         }
     }
 
-    public digestSyn(message: SynMessage): { session: KeySession, cleartext: Uint8Array } {
+    public digestMessage(message: KeyExchangeSynMessage): { session: KeySession, cleartext: Uint8Array } {
         const signedPreKey = this.bundleStore.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
         const onetimePreKey = this.bundleStore.get(hash);

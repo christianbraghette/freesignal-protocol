@@ -10,7 +10,7 @@ const bobmessage = bob.generateData();
 
 const { session: alicesession, message: aliceack } = alice.digestData(bobmessage);
 
-const { session: bobsession, cleartext } = bob.digestSyn(aliceack) ?? {};
+const { session: bobsession, cleartext } = bob.digestMessage(aliceack) ?? {};
 
 if (bobsession && cleartext) {
     console.log("Session established successfully between Alice and Bob.");

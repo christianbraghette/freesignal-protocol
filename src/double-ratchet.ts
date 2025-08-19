@@ -18,8 +18,7 @@
  */
 
 import crypto from "./crypto";
-import { LocalStorage } from "./data";
-import { Encodable } from "./types";
+import { Encodable, LocalStorage } from "./types";
 import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "./utils";
 
 type ExportedKeySession = {
@@ -81,12 +80,12 @@ export class KeySession {
     private setRemoteKey(key: Uint8Array): this {
         this._remoteKey = key;
         this.receivingChain = this.ratchetKeys();
-        if (this.receivingCount > (EncryptedPayloadConstructor.maxCount - KeySession.skipLimit * 2))
+        if (this.receivingCount > (EncryptedDataConstructor.maxCount - KeySession.skipLimit * 2))
             this.receivingCount = 0;
         this.previousCount = this.sendingCount;
         this.keyPair = crypto.ECDH.keyPair();
         this.sendingChain = this.ratchetKeys();
-        if (this.sendingCount > (EncryptedPayloadConstructor.maxCount - KeySession.skipLimit * 2))
+        if (this.sendingCount > (EncryptedDataConstructor.maxCount - KeySession.skipLimit * 2))
             this.sendingCount = 0;
         return this;
     }
@@ -123,12 +122,12 @@ export class KeySession {
      * @param message - The message as a Uint8Array.
      * @returns An EncryptedPayload or undefined if encryption fails.
      */
-    public encrypt(message: Uint8Array): EncryptedPayload {
+    public encrypt(message: Uint8Array): EncryptedData {
         const key = this.getSendingKey();
-        if (this.sendingCount >= EncryptedPayloadConstructor.maxCount || this.previousCount >= EncryptedPayloadConstructor.maxCount) throw new Error();
-        const nonce = crypto.randomBytes(EncryptedPayloadConstructor.nonceLength);
+        if (this.sendingCount >= EncryptedDataConstructor.maxCount || this.previousCount >= EncryptedDataConstructor.maxCount) throw new Error();
+        const nonce = crypto.randomBytes(EncryptedDataConstructor.nonceLength);
         const ciphertext = crypto.box.encrypt(message, nonce, key);
-        return new EncryptedPayloadConstructor(this.sendingCount, this.previousCount, this.keyPair.publicKey, nonce, ciphertext);
+        return new EncryptedDataConstructor(this.sendingCount, this.previousCount, this.keyPair.publicKey, nonce, ciphertext);
     }
 
     /**
@@ -137,8 +136,8 @@ export class KeySession {
      * @param payload - The received encrypted message.
      * @returns The decrypted message as a Uint8Array, or undefined if decryption fails.
      */
-    public decrypt(payload: Uint8Array | EncryptedPayload): Uint8Array | undefined {
-        const encrypted = EncryptedPayload.from(payload);
+    public decrypt(payload: Uint8Array | EncryptedData): Uint8Array | undefined {
+        const encrypted = EncryptedData.from(payload);
         const publicKey = encrypted.publicKey;
         if (!verifyUint8Array(publicKey, this._remoteKey)) {
             while (this.receivingCount < encrypted.previous)
@@ -215,7 +214,7 @@ export class KeySession {
  * Interface representing an encrypted payload.
  * Provides metadata and de/serialization methods.
  */
-export interface EncryptedPayload extends Encodable {
+export interface EncryptedData extends Encodable {
 
     /**
      * The length of the payload.
@@ -268,7 +267,7 @@ export interface EncryptedPayload extends Encodable {
      */
     toJSON(): string;
 }
-export class EncryptedPayload {
+export class EncryptedData {
 
     /**
      * Static factory method that constructs an `EncryptedPayload` from a raw Uint8Array.
@@ -276,12 +275,12 @@ export class EncryptedPayload {
      * @param array - A previously serialized encrypted payload.
      * @returns An instance of `EncryptedPayload`.
      */
-    public static from(array: Uint8Array | EncryptedPayload) {
-        return new EncryptedPayloadConstructor(array) as EncryptedPayload;
+    public static from(array: Uint8Array | EncryptedData) {
+        return new EncryptedDataConstructor(array) as EncryptedData;
     }
 }
 
-class EncryptedPayloadConstructor implements EncryptedPayload {
+class EncryptedDataConstructor implements EncryptedData {
     public static readonly secretKeyLength = crypto.ECDH.secretKeyLength;
     public static readonly publicKeyLength = crypto.ECDH.publicKeyLength;
     public static readonly keyLength = crypto.box.keyLength;
@@ -292,17 +291,17 @@ class EncryptedPayloadConstructor implements EncryptedPayload {
     private raw: Uint8Array;
 
     constructor(count: number | Uint8Array, previous: number | Uint8Array, publicKey: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array, version?: number | Uint8Array)
-    constructor(encrypted: Uint8Array | EncryptedPayload)
+    constructor(encrypted: Uint8Array | EncryptedData)
     constructor(...arrays: Uint8Array[]) {
         arrays = arrays.filter(value => value !== undefined);
-        if (arrays[0] instanceof EncryptedPayloadConstructor) {
+        if (arrays[0] instanceof EncryptedDataConstructor) {
             this.raw = arrays[0].raw;
             return this;
         }
         if (typeof arrays[0] === 'number')
-            arrays[0] = numberToUint8Array(arrays[0], EncryptedPayloadConstructor.countLength);
+            arrays[0] = numberToUint8Array(arrays[0], EncryptedDataConstructor.countLength);
         if (typeof arrays[1] === 'number')
-            arrays[1] = numberToUint8Array(arrays[1], EncryptedPayloadConstructor.countLength);
+            arrays[1] = numberToUint8Array(arrays[1], EncryptedDataConstructor.countLength);
         if (arrays.length === 6) {
             arrays.unshift(typeof arrays[5] === 'number' ? numberToUint8Array(arrays[5]) : arrays[5]);
             arrays.pop();
@@ -375,10 +374,10 @@ class Offsets {
 
     static readonly checksum = Offsets.set(0, 0);
     static readonly version = Offsets.set(Offsets.checksum.end!, 1);
-    static readonly count = Offsets.set(Offsets.version.end!, EncryptedPayloadConstructor.countLength);
-    static readonly previous = Offsets.set(Offsets.count.end!, EncryptedPayloadConstructor.countLength);
-    static readonly publicKey = Offsets.set(Offsets.previous.end!, EncryptedPayloadConstructor.publicKeyLength);
-    static readonly nonce = Offsets.set(Offsets.publicKey.end!, EncryptedPayloadConstructor.nonceLength);
+    static readonly count = Offsets.set(Offsets.version.end!, EncryptedDataConstructor.countLength);
+    static readonly previous = Offsets.set(Offsets.count.end!, EncryptedDataConstructor.countLength);
+    static readonly publicKey = Offsets.set(Offsets.previous.end!, EncryptedDataConstructor.publicKeyLength);
+    static readonly nonce = Offsets.set(Offsets.publicKey.end!, EncryptedDataConstructor.nonceLength);
     static readonly ciphertext = Offsets.set(Offsets.nonce.end!, undefined);
 
 }

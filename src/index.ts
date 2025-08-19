@@ -18,7 +18,7 @@
  */
 
 import crypto from "./crypto";
-import { LocalStorage } from "./data";
+import { LocalStorage } from "./types";
 import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 
@@ -44,3 +44,9 @@ export function createKeySession(opts?: { secretKey?: Uint8Array, remoteKey?: Ui
 export function createKeyExchange(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, crypto.KeyPair>): KeyExchange {
     return new KeyExchange(signSecretKey, boxSecretKey, bundleStore);
 }
+
+export * from "./types";
+
+export { Protocols, Datagram } from "./data";
+
+export { EncryptedData } from "./double-ratchet"
