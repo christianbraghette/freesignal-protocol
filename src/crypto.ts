@@ -28,76 +28,10 @@ import {
 import nacl from 'tweetnacl';
 import { stringify, parse, v4 as uuidv4 } from 'uuid';
 import { decodeUTF8 } from './utils';
-
-export type HashAlgorithms = 'sha224' | 'sha256' | 'sha384' | 'sha512';
-export type HmacAlgorithms = 'kmac128' | 'kmac256';
-
-interface UUIDv4 {
-    toString(): string
-    toJSON(): string
-    toBuffer(): Uint8Array
-}
-
-export interface Crypto {
-    hash(message: Uint8Array, algorithm?: HashAlgorithms): Uint8Array;
-    hmac(key: Uint8Array, message: Uint8Array, length?: number, algorithm?: HmacAlgorithms): Uint8Array
-    hkdf(key: Uint8Array, salt: Uint8Array, info?: Uint8Array | string, length?: number): Uint8Array;
-
-    readonly KeyPair: typeof Crypto.KeyPair;
-    readonly box: Crypto.box;
-    readonly ECDH: Crypto.ECDH;
-    readonly EdDSA: Crypto.EdDSA;
-    readonly UUID: Crypto.UUID;
-
-    randomBytes(n: number): Uint8Array;
-    scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array;
-}
-export namespace Crypto {
-    export type KeyPair = {
-        readonly publicKey: Uint8Array;
-        readonly secretKey: Uint8Array;
-    }
-    export declare namespace KeyPair {
-        export function isKeyPair(obj: any): boolean;
-    }
-
-    export interface box {
-        readonly keyLength: number;
-        readonly nonceLength: number;
-
-        encrypt(msg: Uint8Array, nonce: Uint8Array, key: Uint8Array): Uint8Array;
-        decrypt(msg: Uint8Array, nonce: Uint8Array, key: Uint8Array): Uint8Array | undefined;
-    }
-
-    export interface ECDH {
-        readonly publicKeyLength: number;
-        readonly secretKeyLength: number;
-
-        keyPair(secretKey?: Uint8Array): KeyPair;
-        sharedKey(publicKey: Uint8Array, secretKey: Uint8Array): Uint8Array;
-    }
-
-    export interface EdDSA {
-        readonly publicKeyLength: number;
-        readonly secretKeyLength: number;
-        readonly signatureLength: number;
-        readonly seedLength: number;
-
-        keyPair(secretKey?: Uint8Array): KeyPair;
-        keyPairFromSeed(seed: Uint8Array): KeyPair;
-        sign(msg: Uint8Array, secretKey: Uint8Array): Uint8Array;
-        verify(msg: Uint8Array, sig: Uint8Array, publicKey: Uint8Array): boolean;
-    }
-
-    export interface UUID {
-        generate(): UUIDv4;
-        stringify(arr: Uint8Array, offset?: number): string;
-        parse(uuid: string): Uint8Array;
-    }
-}
+import { Crypto } from './types';
 
 class CryptoConstructor implements Crypto {
-    hash(message: Uint8Array, algorithm: HashAlgorithms = 'sha256'): Uint8Array {
+    hash(message: Uint8Array, algorithm: Crypto.HashAlgorithms = 'sha256'): Uint8Array {
         switch (algorithm) {
             case 'sha224':
                 return new Uint8Array(sha3_224.digest(message));
@@ -113,7 +47,7 @@ class CryptoConstructor implements Crypto {
     }
 
 
-    hmac(key: Uint8Array, message: Uint8Array, length: number = 32, algorithm: HmacAlgorithms = 'kmac256') {
+    hmac(key: Uint8Array, message: Uint8Array, length: number = 32, algorithm: Crypto.HmacAlgorithms = 'kmac256') {
         length *= 8;
         switch (algorithm) {
             case 'kmac128':

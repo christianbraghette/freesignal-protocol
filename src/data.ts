@@ -77,8 +77,11 @@ export namespace Datagram {
         return obj instanceof DatagramConstructor || (obj && typeof obj === 'object' && 'id' in obj && 'version' in obj && 'sender' in obj && 'receiver' in obj && 'protocol' in obj && 'createdAt' in obj);
     }
 
-    export function from(data: Uint8Array): DatagramConstructor {
-        return new DatagramConstructor(data);
+    export function from(data: Uint8Array | Datagram | string): DatagramConstructor {
+        if (typeof data === 'string') {
+            const decoded = decodeBase64(data);
+            return new DatagramConstructor(decoded);
+        } else return new DatagramConstructor(data);
     }
 }
 
