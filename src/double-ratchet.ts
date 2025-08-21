@@ -18,7 +18,7 @@
  */
 
 import crypto from "./crypto";
-import { Encodable } from "./types";
+import { Encodable, Crypto } from "./types";
 import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "./utils";
 
 type ExportedKeySession = {
@@ -42,7 +42,7 @@ export class KeySession {
     public static readonly version = 1;
     public static readonly rootKeyLength = crypto.box.keyLength;
 
-    private keyPair: crypto.KeyPair;
+    private keyPair: Crypto.KeyPair;
     private _remoteKey?: Uint8Array;
     private rootKey?: Uint8Array;
     private sendingChain?: Uint8Array;
@@ -92,7 +92,7 @@ export class KeySession {
 
     private ratchetKeys(info?: Uint8Array): Uint8Array {
         if (!this._remoteKey) throw new Error();
-        const sharedKey = crypto.scalarMult(this.keyPair.secretKey, this._remoteKey);
+        const sharedKey = crypto.ECDH.scalarMult(this.keyPair.secretKey, this._remoteKey);
         if (!this.rootKey)
             this.rootKey = crypto.hash(sharedKey);
         const hashkey = crypto.hkdf(sharedKey, this.rootKey, info, KeySession.keyLength * 2);

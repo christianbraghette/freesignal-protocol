@@ -17,6 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
+import { numberFromUint8Array, numberToUint8Array } from "./utils";
+
 /** */
 export interface Encodable {
     encode(): Uint8Array;
@@ -28,6 +30,39 @@ export namespace Encodable {
 
     export function isEncodable(obj: any): boolean {
         return !properties.some(prop => !obj[prop]);
+    }
+}
+
+export enum Protocols {
+    NULL = '',
+    MESSAGE = '/freesignal/message/1.0.0',
+    RELAY = '/freesignal/relay/1.0.0',
+}
+export namespace Protocols {
+
+    export function isProtocol(protocol: any): boolean {
+        return Object.values(Protocols).includes(protocol);
+    }
+
+    export function fromCode(code: number): Protocols {
+        return Object.values(Protocols)[code] as Protocols;
+    }
+
+    export function toCode(protocol: Protocols): number {
+        return Object.values(Protocols).indexOf(protocol);
+    }
+
+    export function encode(protocol: Protocols, length?: number): Uint8Array {
+        /*const raw = numberToUint8Array(Protocols.toCode(protocol), length).reverse();
+        raw[0] |= (raw.length - 1) << 6;
+        return raw;*/
+        return numberToUint8Array(Protocols.toCode(protocol), length);
+    }
+
+    export function decode(array: Uint8Array): Protocols {
+        //array[0] &= 63;
+        //array = array.reverse();
+        return Protocols.fromCode(numberFromUint8Array(array));
     }
 }
 
@@ -87,7 +122,6 @@ export interface Crypto {
     readonly UUID: Crypto.UUID;
 
     randomBytes(n: number): Uint8Array;
-    scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array;
 }
 export namespace Crypto {
     export type HashAlgorithms = 'sha224' | 'sha256' | 'sha384' | 'sha512';
@@ -115,6 +149,7 @@ export namespace Crypto {
 
         keyPair(secretKey?: Uint8Array): KeyPair;
         sharedKey(publicKey: Uint8Array, secretKey: Uint8Array): Uint8Array;
+        scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array;
     }
 
     export interface EdDSA {

@@ -47,6 +47,6 @@ export function createKeyExchange(signSecretKey: Uint8Array, boxSecretKey: Uint8
 
 export * from "./types";
 
-export { Protocols, Datagram } from "./data";
+export { Datagram } from "./data";
 
 export { EncryptedData } from "./double-ratchet"

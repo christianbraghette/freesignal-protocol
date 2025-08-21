@@ -20,48 +20,13 @@
 import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, numberFromUint8Array, numberToUint8Array } from "./utils";
 import crypto from "./crypto";
 import fflate from "fflate";
-import { Encodable } from "./types";
-
-export enum Protocols {
-    NULL = '',
-    MESSAGE = '/freesignal/message/1.0.0',
-    RELAY = '/freesignal/relay/1.0.0',
-}
-export namespace Protocols {
-
-    export function isProtocol(protocol: any): boolean {
-        return Object.values(Protocols).includes(protocol);
-    }
-
-    export function fromCode(code: number): Protocols {
-        return Object.values(Protocols)[code] as Protocols;
-    }
-
-    export function toCode(protocol: Protocols): number {
-        return Object.values(Protocols).indexOf(protocol);
-    }
-
-    export function encode(protocol: Protocols, length?: number): Uint8Array {
-        /*const raw = numberToUint8Array(Protocols.toCode(protocol), length).reverse();
-        raw[0] |= (raw.length - 1) << 6;
-        return raw;*/
-        return numberToUint8Array(Protocols.toCode(protocol), length ?? 4, 'big');
-    }
-
-    export function decode(array: Uint8Array): Protocols {
-        array[0] &= 63;
-        array = array.reverse();
-        return Protocols.fromCode(numberFromUint8Array(array));
-    }
-}
+import { Encodable, Protocols } from "./types";
 
 export interface Datagram {
     readonly id: string;
     readonly version: number;
-    readonly senderKey: string;
-    readonly senderRelay?: string;
-    readonly receiverKey: string;
-    readonly receiverRelay?: string;
+    readonly sender: string;
+    readonly receiver: string;
     readonly protocol: Protocols;
     readonly createdAt: number;
     payload?: Uint8Array;
@@ -88,15 +53,13 @@ export namespace Datagram {
 class DatagramConstructor implements Encodable, Datagram {
     public readonly id: string;
     public readonly version: number;
-    public readonly senderKey: string;
-    public readonly senderRelay?: string;
-    public readonly receiverKey: string;
-    public readonly receiverRelay?: string;
+    public readonly sender: string;
+    public readonly receiver: string;
     public readonly protocol: Protocols;
     public readonly createdAt: number;
     public payload?: Uint8Array;
 
-    private static headerOffset = 28 + crypto.EdDSA.publicKeyLength * 2;
+    private static headerOffset = 26 + crypto.EdDSA.publicKeyLength * 2;
 
     public constructor(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable)
     public constructor(data: Uint8Array | Datagram)
@@ -104,51 +67,35 @@ class DatagramConstructor implements Encodable, Datagram {
         if (!receiver && !protocol && !payload) {
             if (data instanceof Uint8Array) {
                 this.version = data[0] & 63;
-                this.protocol = Protocols.decode(data.subarray(1, 4));
-                this.id = crypto.UUID.stringify(data.subarray(4, 20));
-                this.createdAt = numberFromUint8Array(data.subarray(20, 28));
-                this.senderKey = encodeBase64(data.subarray(28, 28 + crypto.EdDSA.publicKeyLength));
-                this.receiverKey = encodeBase64(data.subarray(28 + crypto.EdDSA.publicKeyLength, DatagramConstructor.headerOffset));
-                const senderRelayOffset = data.indexOf(255, DatagramConstructor.headerOffset);
-                const receiverRelayOffset = data.indexOf(255, senderRelayOffset + 1);
-                this.senderRelay = encodeUTF8(data.subarray(DatagramConstructor.headerOffset, senderRelayOffset)) ? "" : undefined;
-                this.receiverRelay = encodeUTF8(data.subarray(senderRelayOffset + 1, receiverRelayOffset)) ? "" : undefined;
+                this.protocol = Protocols.decode(data.subarray(1, 2));
+                this.id = crypto.UUID.stringify(data.subarray(2, 18));
+                this.createdAt = numberFromUint8Array(data.subarray(18, 26));
+                this.sender = encodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
+                this.receiver = encodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramConstructor.headerOffset));
                 if (data[0] & 128) {
                     const signature = data.subarray(data.length - crypto.EdDSA.signatureLength);
-                    if (!crypto.EdDSA.verify(data.subarray(0, data.length - crypto.EdDSA.signatureLength), signature, data.subarray(28, 28 + crypto.EdDSA.publicKeyLength)))
+                    if (!crypto.EdDSA.verify(data.subarray(0, data.length - crypto.EdDSA.signatureLength), signature, data.subarray(26, 26 + crypto.EdDSA.publicKeyLength)))
                         throw new Error('Invalid signature for Datagram');
                 }
                 if (data[0] & 64)
-                    this.payload = fflate.inflateSync(data.subarray(receiverRelayOffset + 1, data.length));
+                    this.payload = fflate.inflateSync(data.subarray(DatagramConstructor.headerOffset, data.length));
                 else
-                    this.payload = data.subarray(receiverRelayOffset + 1, data.length);
+                    this.payload = data.subarray(DatagramConstructor.headerOffset, data.length);
             } else if (Datagram.isDatagram(data)) {
                 const datagram = data as Datagram;
                 this.id = datagram.id;
                 this.version = datagram.version;
-                this.senderKey = datagram.senderKey;
-                this.receiverKey = datagram.receiverKey;
+                this.sender = datagram.sender;
+                this.receiver = datagram.receiver;
                 this.protocol = datagram.protocol;
                 this.createdAt = datagram.createdAt;
-                this.senderRelay = datagram.senderRelay;
-                this.receiverRelay = datagram.receiverRelay;
                 this.payload = datagram.payload;
             } else throw new Error('Invalid constructor arguments for Datagram');
         } else if (typeof data === 'string' || data instanceof Uint8Array) {
             this.id = crypto.UUID.generate().toString();
             this.version = Datagram.version;
-            if (typeof data === 'string') {
-                const address = data.split('@');
-                this.senderKey = address[0];
-                this.senderRelay = address[1];
-            } else
-                this.senderKey = encodeBase64(data);
-            if (typeof receiver === 'string') {
-                const address = receiver.split('@');
-                this.receiverKey = address[0];
-                this.receiverRelay = address[1];
-            } else
-                this.receiverKey = encodeBase64(receiver);
+            this.sender = typeof data === 'string' ? data : encodeBase64(data);
+            this.receiver = typeof receiver === 'string' ? receiver : encodeBase64(receiver);
             this.protocol = protocol!;
             this.createdAt = Date.now();
             this.payload = payload instanceof Uint8Array ? payload : payload?.encode();
@@ -159,15 +106,11 @@ class DatagramConstructor implements Encodable, Datagram {
         compression = compression && this.payload != undefined && this.payload.length > 1024;
         return concatUint8Array(
             new Uint8Array(1).fill(this.version | (compression ? 64 : 0)), //1
-            Protocols.encode(this.protocol, 3), //3
+            Protocols.encode(this.protocol), //1
             crypto.UUID.parse(this.id) ?? [], //16
             numberToUint8Array(this.createdAt, 8), //8
-            decodeBase64(this.senderKey), //32
-            decodeBase64(this.receiverKey), //32
-            ...(this.senderRelay ? [decodeUTF8(this.senderRelay)] : []),
-            new Uint8Array(1).fill(255),
-            ...(this.receiverRelay ? [decodeUTF8(this.receiverRelay)] : []),
-            new Uint8Array(1).fill(255),
+            decodeBase64(this.sender), //32
+            decodeBase64(this.receiver), //32
             ...(this.payload ? [compression ? fflate.deflateSync(this.payload) : this.payload] : [])
         );
     }

@@ -18,7 +18,7 @@
  */
 
 import crypto from "./crypto";
-import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage } from "./types";
+import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "./types";
 import { KeySession } from "./double-ratchet";
 import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, verifyUint8Array } from "./utils";
 
@@ -27,28 +27,28 @@ export class KeyExchange {
     private static readonly hkdfInfo = decodeUTF8("freesignal/x3dh/" + KeyExchange.version);
     private static readonly maxOPK = 10;
 
-    private readonly _signatureKey: crypto.KeyPair;
-    private readonly _identityKey: crypto.KeyPair;
-    private readonly bundleStore: LocalStorage<string, crypto.KeyPair>;
+    private readonly _signatureKey: Crypto.KeyPair;
+    private readonly _identityKey: Crypto.KeyPair;
+    private readonly bundleStore: LocalStorage<string, Crypto.KeyPair>;
 
-    public constructor(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, crypto.KeyPair>) {
+    public constructor(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, Crypto.KeyPair>) {
         this._signatureKey = crypto.EdDSA.keyPair(signSecretKey);
         this._identityKey = crypto.ECDH.keyPair(boxSecretKey);
-        this.bundleStore = bundleStore ?? new AsyncMap<string, crypto.KeyPair>();
+        this.bundleStore = bundleStore ?? new AsyncMap<string, Crypto.KeyPair>();
     }
 
     public get signatureKey() { return this._signatureKey.publicKey; }
 
     public get identityKey() { return this._identityKey.publicKey; }
 
-    private generateSPK(): { signedPreKey: crypto.KeyPair, signedPreKeyHash: Uint8Array } {
+    private generateSPK(): { signedPreKey: Crypto.KeyPair, signedPreKeyHash: Uint8Array } {
         const signedPreKey = crypto.ECDH.keyPair();
         const signedPreKeyHash = crypto.hash(signedPreKey.publicKey);
         this.bundleStore.set(encodeBase64(signedPreKeyHash), signedPreKey);
         return { signedPreKey, signedPreKeyHash };
     }
 
-    private generateOPK(spkHash: Uint8Array): { onetimePreKey: crypto.KeyPair, onetimePreKeyHash: Uint8Array } {
+    private generateOPK(spkHash: Uint8Array): { onetimePreKey: Crypto.KeyPair, onetimePreKeyHash: Uint8Array } {
         const onetimePreKey = crypto.ECDH.keyPair();
         const onetimePreKeyHash = crypto.hash(onetimePreKey.publicKey);
         this.bundleStore.set(encodeBase64(spkHash).concat(encodeBase64(onetimePreKeyHash)), onetimePreKey);
@@ -91,10 +91,10 @@ export class KeyExchange {
         const signedPreKeyHash = crypto.hash(signedPreKey);
         const onetimePreKeyHash = onetimePreKey ? crypto.hash(onetimePreKey) : new Uint8Array();
         const rootKey = crypto.hkdf(new Uint8Array([
-            ...crypto.scalarMult(this._identityKey.secretKey, signedPreKey),
-            ...crypto.scalarMult(ephemeralKey.secretKey, identityKey),
-            ...crypto.scalarMult(ephemeralKey.secretKey, signedPreKey),
-            ...onetimePreKey ? crypto.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
+            ...crypto.ECDH.scalarMult(this._identityKey.secretKey, signedPreKey),
+            ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, identityKey),
+            ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, signedPreKey),
+            ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession({ remoteKey: identityKey, rootKey });
         const cyphertext = session.encrypt(concatUint8Array(crypto.hash(this._identityKey.publicKey), crypto.hash(identityKey)));
@@ -122,10 +122,10 @@ export class KeyExchange {
         const identityKey = decodeBase64(message.identityKey);
         const ephemeralKey = decodeBase64(message.ephemeralKey);
         const rootKey = crypto.hkdf(new Uint8Array([
-            ...crypto.scalarMult(signedPreKey.secretKey, identityKey),
-            ...crypto.scalarMult(this._identityKey.secretKey, ephemeralKey),
-            ...crypto.scalarMult(signedPreKey.secretKey, ephemeralKey),
-            ...onetimePreKey ? crypto.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
+            ...crypto.ECDH.scalarMult(signedPreKey.secretKey, identityKey),
+            ...crypto.ECDH.scalarMult(this._identityKey.secretKey, ephemeralKey),
+            ...crypto.ECDH.scalarMult(signedPreKey.secretKey, ephemeralKey),
+            ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession({ secretKey: this._identityKey.secretKey, rootKey })
         const cleartext = session.decrypt(decodeBase64(message.associatedData));

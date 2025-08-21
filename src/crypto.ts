@@ -77,10 +77,6 @@ class CryptoConstructor implements Crypto {
     readonly EdDSA = new CryptoConstructor.EdDSA();
     readonly UUID = new CryptoConstructor.UUID();
 
-    scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array {
-        return nacl.scalarMult(n, p);
-    }
-
     randomBytes = nacl.randomBytes;
 }
 namespace CryptoConstructor {
@@ -109,7 +105,11 @@ namespace CryptoConstructor {
         }
 
         sharedKey(publicKey: Uint8Array, secretKey: Uint8Array) {
-            return nacl.scalarMult(publicKey, secretKey);
+            return nacl.box.before(publicKey, secretKey);
+        }
+
+        scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array {
+            return nacl.scalarMult(n, p);
         }
     }
 
