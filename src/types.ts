@@ -17,19 +17,56 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { numberFromUint8Array, numberToUint8Array } from "./utils";
+import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array } from "@freesignal/utils";
+import crypto from "@freesignal/crypto";
+import fflate from "fflate";
+import { Encodable } from "@freesignal/interfaces";
+import { KeySession } from "./double-ratchet";
 
-/** */
-export interface Encodable {
-    encode(): Uint8Array;
-    toString(): string;
-    toJSON(): string;
+export type UserId = string;
+
+export interface IdentityKeys {
+    readonly publicKey: string;
+    readonly identityKey: string;
 }
-export namespace Encodable {
-    const properties = ['encode', 'toString', 'toJSON'];
+export namespace IdentityKeys {
+    export const keyLength = crypto.ECDH.publicKeyLength;
 
-    export function isEncodable(obj: any): boolean {
-        return !properties.some(prop => !obj[prop]);
+    export function isIdentityKeys(obj: any): boolean {
+        return (typeof obj === 'object' && obj.publicKey && obj.identityKey);
+    }
+
+    export function from(identityKeys: IdentityKeys): IdentityKeysConstructor {
+        return new IdentityKeysConstructor(identityKeys);
+    }
+}
+
+class IdentityKeysConstructor implements IdentityKeys, Encodable {
+    public readonly publicKey: string;
+    public readonly identityKey: string;
+
+    constructor(identityKeys: IdentityKeys | Uint8Array | string) {
+        if (typeof identityKeys === 'string')
+            identityKeys = decodeBase64(identityKeys);
+        if (identityKeys instanceof Uint8Array) {
+            this.publicKey = encodeBase64(identityKeys.subarray(0, IdentityKeys.keyLength));
+            this.identityKey = encodeBase64(identityKeys.subarray(IdentityKeys.keyLength));
+        } else {
+            this.publicKey = identityKeys.publicKey;
+            this.identityKey = identityKeys.identityKey;
+        }
+    }
+
+    encode(): Uint8Array {
+        return concatUint8Array(decodeBase64(this.publicKey), decodeBase64(this.identityKey));
+    }
+
+    toString(): string {
+        throw encodeBase64(this.encode());
+    }
+
+    toJSON(): string {
+        throw this.toString();
     }
 }
 
@@ -37,6 +74,7 @@ export enum Protocols {
     NULL = '',
     MESSAGE = '/freesignal/message/1.0.0',
     RELAY = '/freesignal/relay/1.0.0',
+    HANDSHAKE = '/freesignal/handshake/1.0.0'
 }
 export namespace Protocols {
 
@@ -66,107 +104,295 @@ export namespace Protocols {
     }
 }
 
-type LocalStorageIterator<T> = Iterable<T>;
-
-export interface LocalStorage<K, T> {
-    set(key: K, value: T): Promise<this>;
-    get(key: K): Promise<T | undefined>;
-    has(key: K): Promise<boolean>;
-    delete(key: K): Promise<boolean>;
-    entries(): Promise<LocalStorageIterator<[K, T]>>;
-}
-
-export interface KeyExchangeData {
+export interface Datagram {
+    readonly id: string;
     readonly version: number;
-    readonly publicKey: string;
-    readonly identityKey: string;
-    readonly signedPreKey: string;
-    readonly signature: string;
-    readonly onetimePreKey: string;
+    readonly sender: string;
+    readonly receiver: string;
+    readonly protocol: Protocols;
+    readonly createdAt: number;
+    payload?: Uint8Array;
+}
+export namespace Datagram {
+    export const version = 1;
+
+    export function create(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable): DatagramConstructor {
+        return new DatagramConstructor(sender, receiver, protocol, payload);
+    }
+
+    export function isDatagram(obj: any): boolean {
+        return obj instanceof DatagramConstructor || (obj && typeof obj === 'object' && 'id' in obj && 'version' in obj && 'sender' in obj && 'receiver' in obj && 'protocol' in obj && 'createdAt' in obj);
+    }
+
+    export function from(data: Uint8Array | Datagram | string): DatagramConstructor {
+        if (typeof data === 'string') {
+            const decoded = decodeBase64(data);
+            return new DatagramConstructor(decoded);
+        } else return new DatagramConstructor(data);
+    }
 }
 
-export interface KeyExchangeSynMessage {
+class DatagramConstructor implements Encodable, Datagram {
+    public readonly id: string;
+    public readonly version: number;
+    public readonly sender: string;
+    public readonly receiver: string;
+    public readonly protocol: Protocols;
+    public readonly createdAt: number;
+    public payload?: Uint8Array;
+
+    private static headerOffset = 26 + crypto.EdDSA.publicKeyLength * 2;
+
+    public constructor(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable)
+    public constructor(data: Uint8Array | Datagram)
+    public constructor(data: Uint8Array | string | Datagram, receiver?: Uint8Array | string, protocol?: Protocols, payload?: Uint8Array | Encodable) {
+        if (!receiver && !protocol && !payload) {
+            if (data instanceof Uint8Array) {
+                this.version = data[0] & 63;
+                this.protocol = Protocols.decode(data.subarray(1, 2));
+                this.id = crypto.UUID.stringify(data.subarray(2, 18));
+                this.createdAt = numberFromUint8Array(data.subarray(18, 26));
+                this.sender = encodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
+                this.receiver = encodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramConstructor.headerOffset));
+                if (data[0] & 128) {
+                    const signature = data.subarray(data.length - crypto.EdDSA.signatureLength);
+                    if (!crypto.EdDSA.verify(data.subarray(0, data.length - crypto.EdDSA.signatureLength), signature, data.subarray(26, 26 + crypto.EdDSA.publicKeyLength)))
+                        throw new Error('Invalid signature for Datagram');
+                }
+                if (data[0] & 64)
+                    this.payload = fflate.inflateSync(data.subarray(DatagramConstructor.headerOffset, data.length));
+                else
+                    this.payload = data.subarray(DatagramConstructor.headerOffset, data.length);
+            } else if (Datagram.isDatagram(data)) {
+                const datagram = data as Datagram;
+                this.id = datagram.id;
+                this.version = datagram.version;
+                this.sender = datagram.sender;
+                this.receiver = datagram.receiver;
+                this.protocol = datagram.protocol;
+                this.createdAt = datagram.createdAt;
+                this.payload = datagram.payload;
+            } else throw new Error('Invalid constructor arguments for Datagram');
+        } else if (typeof data === 'string' || data instanceof Uint8Array) {
+            this.id = crypto.UUID.generate().toString();
+            this.version = Datagram.version;
+            this.sender = typeof data === 'string' ? data : encodeBase64(data);
+            this.receiver = typeof receiver === 'string' ? receiver : encodeBase64(receiver);
+            this.protocol = protocol!;
+            this.createdAt = Date.now();
+            this.payload = payload instanceof Uint8Array ? payload : payload?.encode();
+        } else throw new Error('Invalid constructor arguments for Datagram');
+    }
+
+    public encode(compression: boolean = true): Uint8Array {
+        compression = compression && this.payload != undefined && this.payload.length > 1024;
+        return concatUint8Array(
+            new Uint8Array(1).fill(this.version | (compression ? 64 : 0)), //1
+            Protocols.encode(this.protocol), //1
+            crypto.UUID.parse(this.id) ?? [], //16
+            numberToUint8Array(this.createdAt, 8), //8
+            decodeBase64(this.sender), //32
+            decodeBase64(this.receiver), //32
+            ...(this.payload ? [compression ? fflate.deflateSync(this.payload) : this.payload] : [])
+        );
+    }
+
+    public encodeSigned(secretKey: Uint8Array, compression?: boolean): Uint8Array {
+        //if (!this.payload) throw new Error('Cannot sign a datagram without payload');
+        const header = this.encode(compression);
+        header[0] |= 128; // Set the sign bit
+        const signature = crypto.EdDSA.sign(header, secretKey);
+        return concatUint8Array(header, signature);
+    }
+
+    public toString(): string {
+        return encodeBase64(this.encode());
+    }
+
+    public toJSON(): string {
+        /*return JSON.stringify({
+            id: this.id,
+            version: this.version,
+            senderKey: this.senderKey,
+            senderRelay: this.senderRelay,
+            receiverKey: this.receiverKey,
+            receiverRelay: this.receiverRelay,
+            protocol: this.protocol,
+            createdAt: this.createdAt,
+            payload: this.payload ? encodeBase64(this.payload) : undefined
+        });*/
+        return this.toString();
+    }
+}
+
+/**
+ * Interface representing an encrypted payload.
+ * Provides metadata and de/serialization methods.
+ */
+export interface EncryptedData extends Encodable {
+
+    /**
+     * The length of the payload.
+     */
+    readonly length: number;
+
+    /**
+     * Version of the payload.
+     */
     readonly version: number;
-    readonly publicKey: string;
-    readonly identityKey: string;
-    readonly ephemeralKey: string;
-    readonly signedPreKeyHash: string;
-    readonly onetimePreKeyHash: string;
-    readonly associatedData: string;
+
+    /**
+     * The current message count of the sending chain.
+     */
+    readonly count: number;
+
+    /**
+     * The count of the previous sending chain.
+     */
+    readonly previous: number;
+
+    /**
+     * The sender's public key used for this message.
+     */
+    readonly publicKey: Uint8Array;
+
+    /**
+     * The nonce used during encryption.
+     */
+    readonly nonce: Uint8Array;
+
+    /**
+     * The encrypted message content.
+     */
+    readonly ciphertext: Uint8Array;
+
+
+    /**
+     * Serializes the payload into a Uint8Array for transport.
+     */
+    encode(): Uint8Array;
+
+    /**
+     * Returns the payload as a Base64 string.
+     */
+    toString(): string;
+
+    /**
+     * Returns the decoded object as a JSON string.
+     */
+    toJSON(): string;
+}
+export class EncryptedData {
+
+    /**
+     * Static factory method that constructs an `EncryptedPayload` from a raw Uint8Array.
+     *
+     * @param array - A previously serialized encrypted payload.
+     * @returns An instance of `EncryptedPayload`.
+     */
+    public static from(array: Uint8Array | EncryptedData) {
+        return new EncryptedDataConstructor(array) as EncryptedData;
+    }
 }
 
-export interface KeyExchangeDataBundle {
-    readonly version: number;
-    readonly publicKey: string;
-    readonly identityKey: string;
-    readonly signedPreKey: string;
-    readonly signature: string;
-    readonly onetimePreKey: string[];
+export class EncryptedDataConstructor implements EncryptedData {
+    public static readonly secretKeyLength = crypto.ECDH.secretKeyLength;
+    public static readonly publicKeyLength = crypto.ECDH.publicKeyLength;
+    public static readonly keyLength = crypto.box.keyLength;
+    public static readonly nonceLength = crypto.box.nonceLength;
+    public static readonly maxCount = 65536 //32768;
+    public static readonly countLength = 2;
+
+    private raw: Uint8Array;
+
+    constructor(count: number | Uint8Array, previous: number | Uint8Array, publicKey: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array, version?: number | Uint8Array)
+    constructor(encrypted: Uint8Array | EncryptedData)
+    constructor(...arrays: Uint8Array[]) {
+        arrays = arrays.filter(value => value !== undefined);
+        if (arrays[0] instanceof EncryptedDataConstructor) {
+            this.raw = arrays[0].raw;
+            return this;
+        }
+        if (typeof arrays[0] === 'number')
+            arrays[0] = numberToUint8Array(arrays[0], EncryptedDataConstructor.countLength);
+        if (typeof arrays[1] === 'number')
+            arrays[1] = numberToUint8Array(arrays[1], EncryptedDataConstructor.countLength);
+        if (arrays.length === 6) {
+            arrays.unshift(typeof arrays[5] === 'number' ? numberToUint8Array(arrays[5]) : arrays[5]);
+            arrays.pop();
+        } else if (arrays.length > 1) {
+            arrays.unshift(numberToUint8Array(KeySession.version));
+        }
+        this.raw = concatUint8Array(...arrays);
+    }
+
+    public get length() { return this.raw.length; }
+
+    public get version() { return numberFromUint8Array(new Uint8Array(this.raw.buffer, ...Offsets.version.get)); }
+
+    public get count() { return numberFromUint8Array(new Uint8Array(this.raw.buffer, ...Offsets.count.get)); }
+
+    public get previous() { return numberFromUint8Array(new Uint8Array(this.raw.buffer, ...Offsets.previous.get)); }
+
+    public get publicKey() { return new Uint8Array(this.raw.buffer, ...Offsets.publicKey.get); }
+
+    public get nonce() { return new Uint8Array(this.raw.buffer, ...Offsets.nonce.get); }
+
+    public get ciphertext() { return new Uint8Array(this.raw.buffer, Offsets.ciphertext.start); }
+
+    public encode(): Uint8Array {
+        return this.raw;
+    }
+
+    public decode() {
+        return {
+            version: this.version,
+            count: this.count,
+            previous: this.previous,
+            publicKey: encodeBase64(this.publicKey),
+            nonce: encodeBase64(this.nonce),
+            ciphertext: encodeBase64(this.ciphertext)
+        }
+    }
+
+    public toString(): string {
+        return encodeBase64(this.raw);
+    }
+
+    public toJSON(): string {
+        return JSON.stringify(this.decode());
+    }
 }
 
-interface UUIDv4 {
-    toString(): string
-    toJSON(): string
-    toBuffer(): Uint8Array
-}
+class Offsets {
 
-export interface Crypto {
-    hash(message: Uint8Array, algorithm?: Crypto.HashAlgorithms): Uint8Array;
-    hmac(key: Uint8Array, message: Uint8Array, length?: number, algorithm?: Crypto.HmacAlgorithms): Uint8Array
-    hkdf(key: Uint8Array, salt: Uint8Array, info?: Uint8Array | string, length?: number): Uint8Array;
+    private static set(start: number, length?: number) {
+        class Offset {
+            readonly start: number;
+            readonly end?: number;
+            readonly length?: number;
 
-    readonly KeyPair: typeof Crypto.KeyPair;
-    readonly box: Crypto.box;
-    readonly ECDH: Crypto.ECDH;
-    readonly EdDSA: Crypto.EdDSA;
-    readonly UUID: Crypto.UUID;
+            constructor(start: number, length?: number) {
+                this.start = start;
+                this.length = length;
 
-    randomBytes(n: number): Uint8Array;
-}
-export namespace Crypto {
-    export type HashAlgorithms = 'sha224' | 'sha256' | 'sha384' | 'sha512';
-    export type HmacAlgorithms = 'kmac128' | 'kmac256';
+                if (typeof length === 'number')
+                    this.end = start + length;
+            }
 
-    export type KeyPair = {
-        readonly publicKey: Uint8Array;
-        readonly secretKey: Uint8Array;
-    }
-    export declare namespace KeyPair {
-        export function isKeyPair(obj: any): boolean;
+            get get() {
+                return [this.start, this.length];
+            }
+        }
+        return new Offset(start, length);
     }
 
-    export interface box {
-        readonly keyLength: number;
-        readonly nonceLength: number;
+    static readonly checksum = Offsets.set(0, 0);
+    static readonly version = Offsets.set(Offsets.checksum.end!, 1);
+    static readonly count = Offsets.set(Offsets.version.end!, EncryptedDataConstructor.countLength);
+    static readonly previous = Offsets.set(Offsets.count.end!, EncryptedDataConstructor.countLength);
+    static readonly publicKey = Offsets.set(Offsets.previous.end!, EncryptedDataConstructor.publicKeyLength);
+    static readonly nonce = Offsets.set(Offsets.publicKey.end!, EncryptedDataConstructor.nonceLength);
+    static readonly ciphertext = Offsets.set(Offsets.nonce.end!, undefined);
 
-        encrypt(msg: Uint8Array, nonce: Uint8Array, key: Uint8Array): Uint8Array;
-        decrypt(msg: Uint8Array, nonce: Uint8Array, key: Uint8Array): Uint8Array | undefined;
-    }
-
-    export interface ECDH {
-        readonly publicKeyLength: number;
-        readonly secretKeyLength: number;
-
-        keyPair(secretKey?: Uint8Array): KeyPair;
-        sharedKey(publicKey: Uint8Array, secretKey: Uint8Array): Uint8Array;
-        scalarMult(n: Uint8Array, p: Uint8Array): Uint8Array;
-    }
-
-    export interface EdDSA {
-        readonly publicKeyLength: number;
-        readonly secretKeyLength: number;
-        readonly signatureLength: number;
-        readonly seedLength: number;
-
-        keyPair(secretKey?: Uint8Array): KeyPair;
-        keyPairFromSeed(seed: Uint8Array): KeyPair;
-        sign(msg: Uint8Array, secretKey: Uint8Array): Uint8Array;
-        verify(msg: Uint8Array, sig: Uint8Array, publicKey: Uint8Array): boolean;
-    }
-
-    export interface UUID {
-        generate(): UUIDv4;
-        stringify(arr: Uint8Array, offset?: number): string;
-        parse(uuid: string): Uint8Array;
-    }
 }

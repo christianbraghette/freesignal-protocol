@@ -17,10 +17,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import crypto from "./crypto";
-import { LocalStorage } from "./types";
+import crypto from "@freesignal/crypto";
+import { LocalStorage, Crypto } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
+import { IdentityKeys, UserId } from "./types";
+import { FreeSignalAPI } from "./api";
 
 /**
  * Creates a new Double Ratchet session.
@@ -45,8 +47,14 @@ export function createKeyExchange(signSecretKey: Uint8Array, boxSecretKey: Uint8
     return new KeyExchange(signSecretKey, boxSecretKey, bundleStore);
 }
 
-export * from "./types";
+export function createAPI(opts: {
+    secretSignKey: Uint8Array;
+    secretBoxKey: Uint8Array;
+    sessions: LocalStorage<UserId, KeySession>;
+    keyExchange: LocalStorage<string, Crypto.KeyPair>;
+    users: LocalStorage<UserId, IdentityKeys>;
+}): FreeSignalAPI {
+    return new FreeSignalAPI(opts);
+}
 
-export { Datagram } from "./data";
-
-export { EncryptedData } from "./double-ratchet"
+export { IdentityKeys, Protocols, EncryptedData, Datagram } from "./types";

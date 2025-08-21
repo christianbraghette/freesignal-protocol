@@ -17,10 +17,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import crypto from "./crypto";
-import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "./types";
+import crypto from "@freesignal/crypto";
+import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
-import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, verifyUint8Array } from "./utils";
+import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, verifyUint8Array } from "@freesignal/utils";
 
 export class KeyExchange {
     public static readonly version = 1;

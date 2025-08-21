@@ -1,0 +1,119 @@
+import { Crypto, LocalStorage } from "@freesignal/interfaces";
+import crypto from "@freesignal/crypto";
+import { KeySession } from "./double-ratchet";
+import { KeyExchange } from "./x3dh";
+import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "@freesignal/utils";
+import { Datagram, IdentityKeys, EncryptedData, UserId } from "./types";
+import fflate from "fflate"
+
+export class FreeSignalAPI {
+    protected readonly signKey: Crypto.KeyPair;
+    protected readonly boxKey: Crypto.KeyPair;
+    protected readonly sessions: LocalStorage<UserId, KeySession>;
+    protected readonly keyExchange: KeyExchange;
+    protected readonly users: LocalStorage<UserId, IdentityKeys>;
+
+    public constructor(opts: {
+        secretSignKey: Uint8Array,
+        secretBoxKey: Uint8Array,
+        sessions: LocalStorage<UserId, KeySession>,
+        keyExchange: LocalStorage<string, Crypto.KeyPair>,
+        users: LocalStorage<UserId, IdentityKeys>
+    }) {
+        const { secretSignKey, secretBoxKey, sessions, keyExchange, users } = opts;
+        this.signKey = crypto.EdDSA.keyPair(secretSignKey);
+        this.boxKey = crypto.ECDH.keyPair(secretBoxKey);
+        this.sessions = sessions;
+        this.keyExchange = new KeyExchange(secretSignKey, secretBoxKey, keyExchange);
+        this.users = users;
+    }
+
+    public async encryptData(data: Uint8Array, userId: string): Promise<EncryptedData> {
+        const session = await this.sessions.get(userId);
+        if (!session) throw new Error('Session not found for user: ' + userId);
+        const encrypted = session.encrypt(data);
+        this.sessions.set(userId, session); // Ensure session is updated
+        return encrypted;
+    }
+
+    public async decryptData(data: Uint8Array, userId: string): Promise<Uint8Array> {
+        const session = await this.sessions.get(userId);
+        if (!session) throw new Error('Session not found for user: ' + userId);
+        const decrypted = session.decrypt(data);
+        if (!decrypted) throw new Error('Decryption failed for user: ' + userId);
+        this.sessions.set(userId, session); // Ensure session is updated
+        return decrypted;
+    }
+
+    protected async digestToken(auth?: string): Promise<{ identityKeys: IdentityKeys, userId: UserId }> {
+        if (auth && auth.startsWith("Bearer ")) {
+            const [userId, sharedId] = auth.substring(7).split(":");
+            const identityKeys = await this.users.get(userId);
+            if (!identityKeys)
+                throw new Error('User not found or invalid auth token');
+            if (verifyUint8Array(crypto.hash(crypto.ECDH.sharedKey(decodeBase64(identityKeys.publicKey), this.boxKey.secretKey)), decodeBase64(sharedId)))
+                return { identityKeys, userId: auth };
+            else
+                throw new Error('Authorization token not valid');
+        }
+        throw new Error('Authorization header is required');
+    }
+
+    public createToken(publicKey: Uint8Array): string {
+        const sharedId = crypto.hash(crypto.ECDH.sharedKey(publicKey, this.boxKey.secretKey));
+        const userId = crypto.hash(this.signKey.publicKey);
+        return `Bearer ${encodeBase64(userId)}:${encodeBase64(sharedId)}`;
+    };
+
+    protected packDatagrams(messages: Datagram[]): Uint8Array {
+        return fflate.deflateSync(concatUint8Array(...messages.flatMap(
+            datagram => {
+                const encoded = Datagram.from(datagram).encode();
+                return [numberToUint8Array(encoded.length, 8), encoded]
+            }
+        )))
+    }
+
+    protected unpackDatagrams(data: Uint8Array): Datagram[] {
+        const messages: Datagram[] = [];
+        let offset = 0
+        data = fflate.inflateSync(data);
+        while (offset < data.length) {
+            const length = data.subarray(offset, offset + 8);
+            if (length.length < 8) {
+                throw new Error('Invalid message length');
+            }
+            const messageLength = numberFromUint8Array(length);
+            offset += 8;
+            if (offset + messageLength > data.length) {
+                throw new Error('Invalid message length');
+            }
+            const messageData = data.subarray(offset, offset + messageLength);
+            offset += messageLength;
+            try {
+                const datagram = Datagram.from(messageData);
+                messages.push(datagram);
+            } catch (error) {
+                throw new Error('Invalid datagram format');
+            }
+        }
+        return messages;
+    }
+
+    public get identityKeys() {
+        return IdentityKeys.from({
+            publicKey: encodeBase64(this.signKey.publicKey),
+            identityKey: encodeBase64(this.boxKey.publicKey)
+        })
+    }
+
+    public static createSecretIdentityKeys(): {
+        secretSignKey: Uint8Array,
+        secretBoxKey: Uint8Array
+    } {
+        return {
+            secretSignKey: crypto.EdDSA.keyPair().secretKey,
+            secretBoxKey: crypto.ECDH.keyPair().secretKey
+        };
+    }
+}

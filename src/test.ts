@@ -1,8 +1,7 @@
-import { createKeyExchange } from ".";
-import crypto from "./crypto";
-import { Datagram } from "./data";
-import { decodeUTF8, encodeUTF8 } from "./utils";
-import { Protocols } from "./types"
+import { createKeyExchange, Datagram, Protocols } from ".";
+import crypto from "@freesignal/crypto";
+import {  } from "./types";
+import { decodeUTF8, encodeUTF8 } from "@freesignal/utils";
 
 const bob = createKeyExchange(crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
 const alice = createKeyExchange(crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
