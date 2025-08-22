@@ -28,6 +28,10 @@ export class FreeSignalAPI {
         this.users = users;
     }
 
+    public get userId(): Uint8Array {
+        return crypto.hash(this.signKey.publicKey);
+    }
+
     public async encryptData(data: Uint8Array, userId: string): Promise<EncryptedData> {
         const session = await this.sessions.get(userId);
         if (!session) throw new Error('Session not found for user: ' + userId);
@@ -51,7 +55,7 @@ export class FreeSignalAPI {
             const identityKeys = await this.users.get(userId);
             if (!identityKeys)
                 throw new Error('User not found or invalid auth token');
-            if (verifyUint8Array(crypto.hash(crypto.ECDH.sharedKey(decodeBase64(identityKeys.publicKey), this.boxKey.secretKey)), decodeBase64(sharedId)))
+            if (verifyUint8Array(crypto.hash(crypto.ECDH.scalarMult(decodeBase64(identityKeys.publicKey), this.boxKey.secretKey)), decodeBase64(sharedId)))
                 return { identityKeys, userId: auth };
             else
                 throw new Error('Authorization token not valid');
@@ -60,9 +64,8 @@ export class FreeSignalAPI {
     }
 
     public createToken(publicKey: Uint8Array): string {
-        const sharedId = crypto.hash(crypto.ECDH.sharedKey(publicKey, this.boxKey.secretKey));
-        const userId = crypto.hash(this.signKey.publicKey);
-        return `Bearer ${encodeBase64(userId)}:${encodeBase64(sharedId)}`;
+        const sharedId = crypto.hash(crypto.ECDH.scalarMult(publicKey, this.boxKey.secretKey));
+        return `Bearer ${encodeBase64(this.userId)}:${encodeBase64(sharedId)}`;
     };
 
     protected packDatagrams(messages: Datagram[]): Uint8Array {
@@ -115,5 +118,9 @@ export class FreeSignalAPI {
             secretSignKey: crypto.EdDSA.keyPair().secretKey,
             secretBoxKey: crypto.ECDH.keyPair().secretKey
         };
+    }
+
+    public static getUserId(publicKey: string | Uint8Array): string {
+        return encodeBase64(crypto.hash(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey)));
     }
 }
