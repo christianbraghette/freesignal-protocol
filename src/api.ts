@@ -4,7 +4,11 @@ import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "@freesignal/utils";
 import { Datagram, IdentityKeys, EncryptedData, UserId } from "./types";
-import fflate from "fflate"
+import fflate from "fflate";
+
+export const FREESIGNAL_MIME = "application/x-freesignal";
+
+type DatagramId = string;
 
 export class FreeSignalAPI {
     protected readonly signKey: Crypto.KeyPair;
@@ -32,6 +36,13 @@ export class FreeSignalAPI {
         return crypto.hash(this.signKey.publicKey);
     }
 
+    public get identityKeys(): IdentityKeys {
+        return {
+            publicKey: encodeBase64(this.signKey.publicKey),
+            identityKey: encodeBase64(this.boxKey.publicKey)
+        }
+    }
+
     public async encryptData(data: Uint8Array, userId: string): Promise<EncryptedData> {
         const session = await this.sessions.get(userId);
         if (!session) throw new Error('Session not found for user: ' + userId);
@@ -49,6 +60,47 @@ export class FreeSignalAPI {
         return decrypted;
     }
 
+    public async getDatagrams(publicKey: string | Uint8Array, url: string): Promise<Datagram[]> {
+        const res = await fetch(url, {
+            method: 'GET',
+            headers: {
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey))
+            }
+        })
+        return this.unpackDatagrams(await this.decryptData(new Uint8Array(await res.arrayBuffer()), FreeSignalAPI.getUserId(publicKey)));
+    }
+
+    public async postDatagrams(datagrams: Datagram[], publicKey: string | Uint8Array, url: string): Promise<number> {
+        const data = await this.encryptData(this.packDatagrams(datagrams), FreeSignalAPI.getUserId(publicKey));
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': FREESIGNAL_MIME,
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey))
+            },
+            body: data.encode() as any
+        });
+        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), FreeSignalAPI.getUserId(publicKey)));
+    }
+
+    public async deleteDatagrams(datagramIds: DatagramId[], publicKey: string | Uint8Array, url: string): Promise<number> {
+        const data = await this.encryptData(this.packIdList(datagramIds), FreeSignalAPI.getUserId(publicKey));
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': FREESIGNAL_MIME,
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey))
+            },
+            body: data.encode() as any
+        });
+        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), FreeSignalAPI.getUserId(publicKey)));
+    }
+
+    public createToken(publicKey: Uint8Array): string {
+        const sharedId = crypto.hash(crypto.ECDH.scalarMult(publicKey, this.boxKey.secretKey));
+        return `Bearer ${encodeBase64(this.userId)}:${encodeBase64(sharedId)}`;
+    };
+
     protected async digestToken(auth?: string): Promise<{ identityKeys: IdentityKeys, userId: UserId }> {
         if (auth && auth.startsWith("Bearer ")) {
             const [userId, sharedId] = auth.substring(7).split(":");
@@ -63,10 +115,17 @@ export class FreeSignalAPI {
         throw new Error('Authorization header is required');
     }
 
-    public createToken(publicKey: Uint8Array): string {
-        const sharedId = crypto.hash(crypto.ECDH.scalarMult(publicKey, this.boxKey.secretKey));
-        return `Bearer ${encodeBase64(this.userId)}:${encodeBase64(sharedId)}`;
-    };
+    protected packIdList(datagramIds: DatagramId[]): Uint8Array {
+        return datagramIds.map(datagramId => crypto.UUID.parse(datagramId)).reduce((prev, curr) => new Uint8Array([...prev, ...curr]), new Uint8Array())
+    }
+
+    protected unpackIdList(data: Uint8Array): DatagramId[] {
+        const ids: DatagramId[] = []
+        for (let i = 0; i < data.length; i += 16) {
+            ids.push(crypto.UUID.stringify(data.subarray(i, i + 16)));
+        }
+        return ids;
+    }
 
     protected packDatagrams(messages: Datagram[]): Uint8Array {
         return fflate.deflateSync(concatUint8Array(...messages.flatMap(
@@ -101,23 +160,6 @@ export class FreeSignalAPI {
             }
         }
         return messages;
-    }
-
-    public get identityKeys() {
-        return IdentityKeys.from({
-            publicKey: encodeBase64(this.signKey.publicKey),
-            identityKey: encodeBase64(this.boxKey.publicKey)
-        })
-    }
-
-    public static createSecretIdentityKeys(): {
-        secretSignKey: Uint8Array,
-        secretBoxKey: Uint8Array
-    } {
-        return {
-            secretSignKey: crypto.EdDSA.keyPair().secretKey,
-            secretBoxKey: crypto.ECDH.keyPair().secretKey
-        };
     }
 
     public static getUserId(publicKey: string | Uint8Array): string {
