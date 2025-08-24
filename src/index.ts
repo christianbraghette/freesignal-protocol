@@ -21,8 +21,6 @@ import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
-import { IdentityKeys, UserId } from "./types";
-import { FreeSignalAPI } from "./api";
 
 /**
  * Creates a new Double Ratchet session.

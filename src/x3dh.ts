@@ -20,11 +20,11 @@
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
-import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, verifyUint8Array } from "@freesignal/utils";
+import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, verifyUint8Array } from "@freesignal/utils";
 
 export class KeyExchange {
     public static readonly version = 1;
-    private static readonly hkdfInfo = decodeUTF8("freesignal/x3dh/" + KeyExchange.version);
+    private static readonly hkdfInfo = encodeUTF8("freesignal/x3dh/" + KeyExchange.version);
     private static readonly maxOPK = 10;
 
     private readonly _signatureKey: Crypto.KeyPair;
@@ -44,14 +44,14 @@ export class KeyExchange {
     private generateSPK(): { signedPreKey: Crypto.KeyPair, signedPreKeyHash: Uint8Array } {
         const signedPreKey = crypto.ECDH.keyPair();
         const signedPreKeyHash = crypto.hash(signedPreKey.publicKey);
-        this.bundleStore.set(encodeBase64(signedPreKeyHash), signedPreKey);
+        this.bundleStore.set(decodeBase64(signedPreKeyHash), signedPreKey);
         return { signedPreKey, signedPreKeyHash };
     }
 
     private generateOPK(spkHash: Uint8Array): { onetimePreKey: Crypto.KeyPair, onetimePreKeyHash: Uint8Array } {
         const onetimePreKey = crypto.ECDH.keyPair();
         const onetimePreKeyHash = crypto.hash(onetimePreKey.publicKey);
-        this.bundleStore.set(encodeBase64(spkHash).concat(encodeBase64(onetimePreKeyHash)), onetimePreKey);
+        this.bundleStore.set(decodeBase64(spkHash).concat(decodeBase64(onetimePreKeyHash)), onetimePreKey);
         return { onetimePreKey, onetimePreKeyHash };
     }
 
@@ -60,11 +60,11 @@ export class KeyExchange {
         const onetimePreKey = new Array(length ?? KeyExchange.maxOPK).fill(0).map(() => this.generateOPK(signedPreKeyHash).onetimePreKey);
         return {
             version: KeyExchange.version,
-            publicKey: encodeBase64(this._signatureKey.publicKey),
-            identityKey: encodeBase64(this._identityKey.publicKey),
-            signedPreKey: encodeBase64(signedPreKey.publicKey),
-            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._signatureKey.secretKey)),
-            onetimePreKey: onetimePreKey.map(opk => encodeBase64(opk.publicKey))
+            publicKey: decodeBase64(this._signatureKey.publicKey),
+            identityKey: decodeBase64(this._identityKey.publicKey),
+            signedPreKey: decodeBase64(signedPreKey.publicKey),
+            signature: decodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._signatureKey.secretKey)),
+            onetimePreKey: onetimePreKey.map(opk => decodeBase64(opk.publicKey))
         }
     }
 
@@ -73,21 +73,21 @@ export class KeyExchange {
         const { onetimePreKey } = this.generateOPK(signedPreKeyHash);
         return {
             version: KeyExchange.version,
-            publicKey: encodeBase64(this._signatureKey.publicKey),
-            identityKey: encodeBase64(this._identityKey.publicKey),
-            signedPreKey: encodeBase64(signedPreKey.publicKey),
-            signature: encodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._signatureKey.secretKey)),
-            onetimePreKey: encodeBase64(onetimePreKey.publicKey)
+            publicKey: decodeBase64(this._signatureKey.publicKey),
+            identityKey: decodeBase64(this._identityKey.publicKey),
+            signedPreKey: decodeBase64(signedPreKey.publicKey),
+            signature: decodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this._signatureKey.secretKey)),
+            onetimePreKey: decodeBase64(onetimePreKey.publicKey)
         }
     }
 
     public digestData(message: KeyExchangeData): { session: KeySession, message: KeyExchangeSynMessage } {
         const ephemeralKey = crypto.ECDH.keyPair();
-        const signedPreKey = decodeBase64(message.signedPreKey);
-        if (!crypto.EdDSA.verify(crypto.hash(signedPreKey), decodeBase64(message.signature), decodeBase64(message.publicKey)))
+        const signedPreKey = encodeBase64(message.signedPreKey);
+        if (!crypto.EdDSA.verify(crypto.hash(signedPreKey), encodeBase64(message.signature), encodeBase64(message.publicKey)))
             throw new Error("Signature verification failed");
-        const identityKey = decodeBase64(message.identityKey);
-        const onetimePreKey = message.onetimePreKey ? decodeBase64(message.onetimePreKey) : undefined;
+        const identityKey = encodeBase64(message.identityKey);
+        const onetimePreKey = message.onetimePreKey ? encodeBase64(message.onetimePreKey) : undefined;
         const signedPreKeyHash = crypto.hash(signedPreKey);
         const onetimePreKeyHash = onetimePreKey ? crypto.hash(onetimePreKey) : new Uint8Array();
         const rootKey = crypto.hkdf(new Uint8Array([
@@ -103,12 +103,12 @@ export class KeyExchange {
             session,
             message: {
                 version: KeyExchange.version,
-                publicKey: encodeBase64(this._signatureKey.publicKey),
-                identityKey: encodeBase64(this._identityKey.publicKey),
-                ephemeralKey: encodeBase64(ephemeralKey.publicKey),
-                signedPreKeyHash: encodeBase64(signedPreKeyHash),
-                onetimePreKeyHash: encodeBase64(onetimePreKeyHash),
-                associatedData: encodeBase64(cyphertext.encode())
+                publicKey: decodeBase64(this._signatureKey.publicKey),
+                identityKey: decodeBase64(this._identityKey.publicKey),
+                ephemeralKey: decodeBase64(ephemeralKey.publicKey),
+                signedPreKeyHash: decodeBase64(signedPreKeyHash),
+                onetimePreKeyHash: decodeBase64(onetimePreKeyHash),
+                associatedData: decodeBase64(cyphertext.encode())
             }
         }
     }
@@ -119,8 +119,8 @@ export class KeyExchange {
         const onetimePreKey = await this.bundleStore.get(hash);
         if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey) throw new Error("ACK message malformed");
         if (!this.bundleStore.delete(hash)) throw new Error("Bundle store deleting error");
-        const identityKey = decodeBase64(message.identityKey);
-        const ephemeralKey = decodeBase64(message.ephemeralKey);
+        const identityKey = encodeBase64(message.identityKey);
+        const ephemeralKey = encodeBase64(message.ephemeralKey);
         const rootKey = crypto.hkdf(new Uint8Array([
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, identityKey),
             ...crypto.ECDH.scalarMult(this._identityKey.secretKey, ephemeralKey),
@@ -128,7 +128,7 @@ export class KeyExchange {
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession({ secretKey: this._identityKey.secretKey, rootKey })
-        const cleartext = session.decrypt(decodeBase64(message.associatedData));
+        const cleartext = session.decrypt(encodeBase64(message.associatedData));
         if (!cleartext) throw new Error("Error decrypting ACK message");
         if (!verifyUint8Array(cleartext, concatUint8Array(crypto.hash(identityKey), crypto.hash(this._identityKey.publicKey))))
             throw new Error("Error verifing Associated Data");

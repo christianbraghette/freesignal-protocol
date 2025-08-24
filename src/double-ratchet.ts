@@ -165,11 +165,11 @@ export class KeySession {
      */
     public export(): ExportedKeySession {
         return {
-            secretKey: encodeBase64(concatUint8Array(this.keyPair.secretKey)),
-            remoteKey: encodeBase64(this._remoteKey),
-            rootKey: encodeBase64(this.rootKey),
-            sendingChain: encodeBase64(this.sendingChain),
-            receivingChain: encodeBase64(this.receivingChain),
+            secretKey: decodeBase64(concatUint8Array(this.keyPair.secretKey)),
+            remoteKey: decodeBase64(this._remoteKey),
+            rootKey: decodeBase64(this.rootKey),
+            sendingChain: decodeBase64(this.sendingChain),
+            receivingChain: decodeBase64(this.receivingChain),
             sendingCount: this.sendingCount,
             receivingCount: this.receivingCount,
             previousCount: this.previousCount,
@@ -185,10 +185,10 @@ export class KeySession {
      */
     public static import(json: string): KeySession {
         const data: ExportedKeySession = JSON.parse(json);
-        const session = new KeySession({ secretKey: decodeBase64(data.secretKey), rootKey: decodeBase64(data.rootKey) });
-        session._remoteKey = decodeBase64(data.remoteKey);
-        session.sendingChain = decodeBase64(data.sendingChain);
-        session.receivingChain = decodeBase64(data.receivingChain);
+        const session = new KeySession({ secretKey: encodeBase64(data.secretKey), rootKey: encodeBase64(data.rootKey) });
+        session._remoteKey = encodeBase64(data.remoteKey);
+        session.sendingChain = encodeBase64(data.sendingChain);
+        session.receivingChain = encodeBase64(data.receivingChain);
         session.sendingCount = data.sendingCount;
         session.receivingCount = data.receivingCount;
         session.previousCount = data.previousCount;

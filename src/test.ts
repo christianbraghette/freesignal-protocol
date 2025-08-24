@@ -1,6 +1,5 @@
 import { createKeyExchange, Datagram, Protocols } from ".";
 import crypto from "@freesignal/crypto";
-import {  } from "./types";
 import { decodeUTF8, encodeUTF8 } from "@freesignal/utils";
 
 const bob = createKeyExchange(crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
@@ -14,13 +13,13 @@ bob.digestMessage(aliceack).then(({ session: bobsession, cleartext }) => {
     if (bobsession && cleartext) {
         console.log("Session established successfully between Alice and Bob.");
 
-        const datagram = Datagram.create(bob.signatureKey, alice.signatureKey, Protocols.MESSAGE, bobsession.encrypt(decodeUTF8("Hi Alice!"))?.encode());
+        const datagram = Datagram.create(bob.signatureKey, alice.signatureKey, Protocols.MESSAGE, bobsession.encrypt(encodeUTF8("Hi Alice!"))?.encode());
 
         //console.log(datagram.payload);
 
         const msg = datagram.encode();
 
-        console.log(encodeUTF8(alicesession.decrypt(Datagram.from(msg!).payload!)));
+        console.log(decodeUTF8(alicesession.decrypt(Datagram.from(msg!).payload!)));
 
         if (alicesession.handshaked && bobsession.handshaked)
             console.log("Successfully handshaked");

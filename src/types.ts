@@ -47,10 +47,10 @@ class IdentityKeysConstructor implements IdentityKeys, Encodable {
 
     constructor(identityKeys: IdentityKeys | Uint8Array | string) {
         if (typeof identityKeys === 'string')
-            identityKeys = decodeBase64(identityKeys);
+            identityKeys = encodeBase64(identityKeys);
         if (identityKeys instanceof Uint8Array) {
-            this.publicKey = encodeBase64(identityKeys.subarray(0, IdentityKeys.keyLength));
-            this.identityKey = encodeBase64(identityKeys.subarray(IdentityKeys.keyLength));
+            this.publicKey = decodeBase64(identityKeys.subarray(0, IdentityKeys.keyLength));
+            this.identityKey = decodeBase64(identityKeys.subarray(IdentityKeys.keyLength));
         } else {
             this.publicKey = identityKeys.publicKey;
             this.identityKey = identityKeys.identityKey;
@@ -58,11 +58,11 @@ class IdentityKeysConstructor implements IdentityKeys, Encodable {
     }
 
     encode(): Uint8Array {
-        return concatUint8Array(decodeBase64(this.publicKey), decodeBase64(this.identityKey));
+        return concatUint8Array(encodeBase64(this.publicKey), encodeBase64(this.identityKey));
     }
 
     toString(): string {
-        throw encodeBase64(this.encode());
+        throw decodeBase64(this.encode());
     }
 
     toJSON(): string {
@@ -126,7 +126,7 @@ export namespace Datagram {
 
     export function from(data: Uint8Array | Datagram | string): DatagramConstructor {
         if (typeof data === 'string') {
-            const decoded = decodeBase64(data);
+            const decoded = encodeBase64(data);
             return new DatagramConstructor(decoded);
         } else return new DatagramConstructor(data);
     }
@@ -152,8 +152,8 @@ class DatagramConstructor implements Encodable, Datagram {
                 this.protocol = Protocols.decode(data.subarray(1, 2));
                 this.id = crypto.UUID.stringify(data.subarray(2, 18));
                 this.createdAt = numberFromUint8Array(data.subarray(18, 26));
-                this.sender = encodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
-                this.receiver = encodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramConstructor.headerOffset));
+                this.sender = decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
+                this.receiver = decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramConstructor.headerOffset));
                 if (data[0] & 128) {
                     const signature = data.subarray(data.length - crypto.EdDSA.signatureLength);
                     if (!crypto.EdDSA.verify(data.subarray(0, data.length - crypto.EdDSA.signatureLength), signature, data.subarray(26, 26 + crypto.EdDSA.publicKeyLength)))
@@ -176,8 +176,8 @@ class DatagramConstructor implements Encodable, Datagram {
         } else if (typeof data === 'string' || data instanceof Uint8Array) {
             this.id = crypto.UUID.generate().toString();
             this.version = Datagram.version;
-            this.sender = typeof data === 'string' ? data : encodeBase64(data);
-            this.receiver = typeof receiver === 'string' ? receiver : encodeBase64(receiver);
+            this.sender = typeof data === 'string' ? data : decodeBase64(data);
+            this.receiver = typeof receiver === 'string' ? receiver : decodeBase64(receiver);
             this.protocol = protocol!;
             this.createdAt = Date.now();
             this.payload = payload instanceof Uint8Array ? payload : payload?.encode();
@@ -191,8 +191,8 @@ class DatagramConstructor implements Encodable, Datagram {
             Protocols.encode(this.protocol), //1
             crypto.UUID.parse(this.id) ?? [], //16
             numberToUint8Array(this.createdAt, 8), //8
-            decodeBase64(this.sender), //32
-            decodeBase64(this.receiver), //32
+            encodeBase64(this.sender), //32
+            encodeBase64(this.receiver), //32
             ...(this.payload ? [compression ? fflate.deflateSync(this.payload) : this.payload] : [])
         );
     }
@@ -206,7 +206,7 @@ class DatagramConstructor implements Encodable, Datagram {
     }
 
     public toString(): string {
-        return encodeBase64(this.encode());
+        return decodeBase64(this.encode());
     }
 
     public toJSON(): string {
@@ -349,14 +349,14 @@ export class EncryptedDataConstructor implements EncryptedData {
             version: this.version,
             count: this.count,
             previous: this.previous,
-            publicKey: encodeBase64(this.publicKey),
-            nonce: encodeBase64(this.nonce),
-            ciphertext: encodeBase64(this.ciphertext)
+            publicKey: decodeBase64(this.publicKey),
+            nonce: decodeBase64(this.nonce),
+            ciphertext: decodeBase64(this.ciphertext)
         }
     }
 
     public toString(): string {
-        return encodeBase64(this.raw);
+        return decodeBase64(this.raw);
     }
 
     public toJSON(): string {

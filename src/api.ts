@@ -38,8 +38,8 @@ export class FreeSignalAPI {
 
     public get identityKeys(): IdentityKeys {
         return {
-            publicKey: encodeBase64(this.signKey.publicKey),
-            identityKey: encodeBase64(this.boxKey.publicKey)
+            publicKey: decodeBase64(this.signKey.publicKey),
+            identityKey: decodeBase64(this.boxKey.publicKey)
         }
     }
 
@@ -64,7 +64,7 @@ export class FreeSignalAPI {
         const res = await fetch(url, {
             method: 'GET',
             headers: {
-                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey))
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             }
         })
         return this.unpackDatagrams(await this.decryptData(new Uint8Array(await res.arrayBuffer()), FreeSignalAPI.getUserId(publicKey)));
@@ -76,7 +76,7 @@ export class FreeSignalAPI {
             method: 'POST',
             headers: {
                 'Content-Type': FREESIGNAL_MIME,
-                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey))
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             },
             body: data.encode() as any
         });
@@ -89,7 +89,7 @@ export class FreeSignalAPI {
             method: 'DELETE',
             headers: {
                 'Content-Type': FREESIGNAL_MIME,
-                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey))
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             },
             body: data.encode() as any
         });
@@ -98,7 +98,7 @@ export class FreeSignalAPI {
 
     public createToken(publicKey: Uint8Array): string {
         const sharedId = crypto.hash(crypto.ECDH.scalarMult(publicKey, this.boxKey.secretKey));
-        return `Bearer ${encodeBase64(this.userId)}:${encodeBase64(sharedId)}`;
+        return `Bearer ${decodeBase64(this.userId)}:${decodeBase64(sharedId)}`;
     };
 
     protected async digestToken(auth?: string): Promise<{ identityKeys: IdentityKeys, userId: UserId }> {
@@ -107,7 +107,7 @@ export class FreeSignalAPI {
             const identityKeys = await this.users.get(userId);
             if (!identityKeys)
                 throw new Error('User not found or invalid auth token');
-            if (verifyUint8Array(crypto.hash(crypto.ECDH.scalarMult(decodeBase64(identityKeys.publicKey), this.boxKey.secretKey)), decodeBase64(sharedId)))
+            if (verifyUint8Array(crypto.hash(crypto.ECDH.scalarMult(encodeBase64(identityKeys.publicKey), this.boxKey.secretKey)), encodeBase64(sharedId)))
                 return { identityKeys, userId: auth };
             else
                 throw new Error('Authorization token not valid');
@@ -163,6 +163,6 @@ export class FreeSignalAPI {
     }
 
     public static getUserId(publicKey: string | Uint8Array): string {
-        return encodeBase64(crypto.hash(publicKey instanceof Uint8Array ? publicKey : decodeBase64(publicKey)));
+        return decodeBase64(crypto.hash(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey)));
     }
 }
