@@ -9,8 +9,8 @@ const bobmessage = bob.generateData();
 
 const { session: alicesession, message: aliceack } = alice.digestData(bobmessage);
 
-bob.digestMessage(aliceack).then(({ session: bobsession, cleartext }) => {
-    if (bobsession && cleartext) {
+bob.digestMessage(aliceack).then(({ session: bobsession, identityKeys }) => {
+    if (bobsession && identityKeys) {
         console.log("Session established successfully between Alice and Bob.");
 
         const datagram = Datagram.create(bob.signatureKey, alice.signatureKey, Protocols.MESSAGE, bobsession.encrypt(encodeUTF8("Hi Alice!"))?.encode());

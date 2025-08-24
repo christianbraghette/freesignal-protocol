@@ -67,11 +67,11 @@ export class FreeSignalAPI {
                 authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             }
         })
-        return this.unpackDatagrams(await this.decryptData(new Uint8Array(await res.arrayBuffer()), FreeSignalAPI.getUserId(publicKey)));
+        return this.unpackDatagrams(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
     }
 
     public async postDatagrams(datagrams: Datagram[], publicKey: string | Uint8Array, url: string): Promise<number> {
-        const data = await this.encryptData(this.packDatagrams(datagrams), FreeSignalAPI.getUserId(publicKey));
+        const data = await this.encryptData(this.packDatagrams(datagrams), UserId.getUserId(publicKey).toString());
         const res = await fetch(url, {
             method: 'POST',
             headers: {
@@ -80,11 +80,11 @@ export class FreeSignalAPI {
             },
             body: data.encode() as any
         });
-        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), FreeSignalAPI.getUserId(publicKey)));
+        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
     }
 
     public async deleteDatagrams(datagramIds: DatagramId[], publicKey: string | Uint8Array, url: string): Promise<number> {
-        const data = await this.encryptData(this.packIdList(datagramIds), FreeSignalAPI.getUserId(publicKey));
+        const data = await this.encryptData(this.packIdList(datagramIds), UserId.getUserId(publicKey).toString());
         const res = await fetch(url, {
             method: 'DELETE',
             headers: {
@@ -93,7 +93,7 @@ export class FreeSignalAPI {
             },
             body: data.encode() as any
         });
-        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), FreeSignalAPI.getUserId(publicKey)));
+        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
     }
 
     public createToken(publicKey: Uint8Array): string {
@@ -160,9 +160,5 @@ export class FreeSignalAPI {
             }
         }
         return messages;
-    }
-
-    public static getUserId(publicKey: string | Uint8Array): string {
-        return decodeBase64(crypto.hash(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey)));
     }
 }

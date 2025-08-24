@@ -20,7 +20,8 @@
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
-import { concatUint8Array, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, verifyUint8Array } from "@freesignal/utils";
+import { concatUint8Array, decodeBase64, encodeBase64, encodeUTF8, verifyUint8Array } from "@freesignal/utils";
+import { IdentityKeys } from "./types";
 
 export class KeyExchange {
     public static readonly version = 1;
@@ -81,7 +82,7 @@ export class KeyExchange {
         }
     }
 
-    public digestData(message: KeyExchangeData): { session: KeySession, message: KeyExchangeSynMessage } {
+    public digestData(message: KeyExchangeData): { session: KeySession, message: KeyExchangeSynMessage, identityKeys: IdentityKeys } {
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = encodeBase64(message.signedPreKey);
         if (!crypto.EdDSA.verify(crypto.hash(signedPreKey), encodeBase64(message.signature), encodeBase64(message.publicKey)))
@@ -98,7 +99,7 @@ export class KeyExchange {
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession({ remoteKey: identityKey, rootKey });
         const cyphertext = session.encrypt(concatUint8Array(crypto.hash(this._identityKey.publicKey), crypto.hash(identityKey)));
-        if (!cyphertext) throw new Error();
+        if (!cyphertext) throw new Error("Decryption error");
         return {
             session,
             message: {
@@ -109,11 +110,16 @@ export class KeyExchange {
                 signedPreKeyHash: decodeBase64(signedPreKeyHash),
                 onetimePreKeyHash: decodeBase64(onetimePreKeyHash),
                 associatedData: decodeBase64(cyphertext.encode())
-            }
+            },
+            identityKeys: {
+                publicKey: message.publicKey,
+                identityKey: message.identityKey
+            },
+
         }
     }
 
-    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession; cleartext: Uint8Array; }> {
+    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, identityKeys: IdentityKeys }> {
         const signedPreKey = await this.bundleStore.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
         const onetimePreKey = await this.bundleStore.get(hash);
@@ -132,7 +138,13 @@ export class KeyExchange {
         if (!cleartext) throw new Error("Error decrypting ACK message");
         if (!verifyUint8Array(cleartext, concatUint8Array(crypto.hash(identityKey), crypto.hash(this._identityKey.publicKey))))
             throw new Error("Error verifing Associated Data");
-        return { session, cleartext };
+        return {
+            session,
+            identityKeys: {
+                publicKey: message.publicKey,
+                identityKey: message.identityKey
+            }
+        };
     }
 }
 
