@@ -97,9 +97,9 @@ export namespace IdentityKeys {
 
 export enum Protocols {
     NULL = '',
-    MESSAGE = '/freesignal/message/1.0.0',
-    RELAY = '/freesignal/relay/1.0.0',
-    HANDSHAKE = '/freesignal/handshake/1.0.0'
+    MESSAGE = '/freesignal/message',
+    RELAY = '/freesignal/relay',
+    HANDSHAKE = '/freesignal/handshake'
 }
 export namespace Protocols {
 
