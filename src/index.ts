@@ -45,11 +45,8 @@ export function createKeyExchange(signSecretKey: Uint8Array, boxSecretKey: Uint8
     return new KeyExchange(signSecretKey, boxSecretKey, bundleStore);
 }
 
-export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { sign: Crypto.KeyPair, box: Crypto.KeyPair } {
-    return {
-        sign: crypto.EdDSA.keyPair(signSecretKey),
-        box: crypto.ECDH.keyPair(boxSecretKey)
-    };
+export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { readonly sign: Crypto.KeyPair, readonly box: Crypto.KeyPair } {
+    return { sign: crypto.EdDSA.keyPair(signSecretKey), box: crypto.ECDH.keyPair(boxSecretKey) };
 }
 
 /*export function createAPI(opts: {
@@ -62,4 +59,4 @@ export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Ui
     return new FreeSignalAPI(opts);
 }*/
 
-export { IdentityKeys, Protocols, EncryptedData, Datagram } from "./types";
+export { IdentityKeys, Protocols, EncryptedData, Datagram, UserId } from "./types";
