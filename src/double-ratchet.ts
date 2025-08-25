@@ -163,7 +163,7 @@ export class KeySession {
     /**
      * Export the state of the session;
      */
-    public export(): ExportedKeySession {
+    public toJSON(): ExportedKeySession {
         return {
             secretKey: decodeBase64(concatUint8Array(this.keyPair.secretKey)),
             remoteKey: decodeBase64(this._remoteKey),
@@ -183,7 +183,7 @@ export class KeySession {
      * @param json string returned by `export()` method.
      * @returns session with the state parsed.
      */
-    public static import(json: string): KeySession {
+    public static parse(json: string): KeySession {
         const data: ExportedKeySession = JSON.parse(json);
         const session = new KeySession({ secretKey: encodeBase64(data.secretKey), rootKey: encodeBase64(data.rootKey) });
         session._remoteKey = encodeBase64(data.remoteKey);

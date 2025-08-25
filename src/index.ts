@@ -23,28 +23,37 @@ import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 
 /**
- * Creates a new Double Ratchet session.
- * 
- * @param opts.remoteKey The public key of the remote party.
- * @param opts.preSharedKey An optional pre-shared key to initialize the session.
- *   
- * @returns A new Double Ratchet session.
+ * Creates a new Double Ratchet session for secure message exchange.
+ *
+ * @param opts - Optional parameters for session initialization.
+ * @param opts.secretKey - The local party's secret key as a Uint8Array.
+ * @param opts.remoteKey - The remote party's public key as a Uint8Array.
+ * @param opts.rootKey - An optional root key to initialize the session.
+ * @returns A new instance of {@link KeySession}.
  */
 export function createKeySession(opts?: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array }): KeySession {
     return new KeySession(opts);
 }
 
 /**
- * Creates a new X3DH session.
- * 
- * @param signKeyPair 
- * @param bundleStore 
- * @returns A new X3DH session.
+ * Creates a new X3DH (Extended Triple Diffie-Hellman) key exchange session.
+ *
+ * @param signSecretKey - The EdDSA signing secret key as a Uint8Array.
+ * @param boxSecretKey - The ECDH box secret key as a Uint8Array.
+ * @param bundleStore - Optional local storage for key bundles.
+ * @returns A new instance of {@link KeyExchange}.
  */
 export function createKeyExchange(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, crypto.KeyPair>): KeyExchange {
     return new KeyExchange(signSecretKey, boxSecretKey, bundleStore);
 }
 
+/**
+ * Generates identity key pairs for signing and encryption.
+ *
+ * @param signSecretKey - Optional secret key for EdDSA signing.
+ * @param boxSecretKey - Optional secret key for ECDH encryption.
+ * @returns An object containing readonly signing and box key pairs.
+ */
 export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { readonly sign: Crypto.KeyPair, readonly box: Crypto.KeyPair } {
     return { sign: crypto.EdDSA.keyPair(signSecretKey), box: crypto.ECDH.keyPair(boxSecretKey) };
 }
@@ -59,4 +68,4 @@ export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Ui
     return new FreeSignalAPI(opts);
 }*/
 
-export { IdentityKeys, Protocols, EncryptedData, Datagram, UserId } from "./types";
+export { UserId, IdentityKeys, Protocols, Datagram, EncryptedData } from "./types";
