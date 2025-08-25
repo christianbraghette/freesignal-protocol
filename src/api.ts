@@ -1,8 +1,8 @@
-import { Crypto, LocalStorage } from "@freesignal/interfaces";
+import { Crypto, KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage } from "@freesignal/interfaces";
 import crypto from "@freesignal/crypto";
 import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
-import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "@freesignal/utils";
+import { concatUint8Array, decodeBase64, decodeJSON, encodeBase64, encodeJSON, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "@freesignal/utils";
 import { Datagram, IdentityKeys, EncryptedData, UserId } from "./types";
 import fflate from "fflate";
 
@@ -17,6 +17,8 @@ export class FreeSignalAPI {
     protected readonly keyExchange: KeyExchange;
     protected readonly users: LocalStorage<UserId, IdentityKeys>;
 
+    public readonly userId: UserId;
+
     public constructor(opts: {
         secretSignKey: Uint8Array,
         secretBoxKey: Uint8Array,
@@ -30,10 +32,7 @@ export class FreeSignalAPI {
         this.sessions = sessions;
         this.keyExchange = new KeyExchange(secretSignKey, secretBoxKey, keyExchange);
         this.users = users;
-    }
-
-    public get userId(): Uint8Array {
-        return crypto.hash(this.signKey.publicKey);
+        this.userId = UserId.getUserId(this.signKey.publicKey).toString();
     }
 
     public get identityKeys(): IdentityKeys {
@@ -58,6 +57,46 @@ export class FreeSignalAPI {
         if (!decrypted) throw new Error('Decryption failed for user: ' + userId);
         this.sessions.set(userId, session); // Ensure session is updated
         return decrypted;
+    }
+
+    public async getHandshake(url: string, userId?: UserId): Promise<KeyExchangeData> {
+        const res = await fetch(`${url}/${userId ?? ''}`, {
+            method: 'GET'
+        })
+        return decodeJSON(new Uint8Array(await res.arrayBuffer()))
+    }
+
+    public async postHandshake(url: string, message: KeyExchangeSynMessage): Promise<boolean> {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': FREESIGNAL_MIME
+            },
+            body: encodeJSON(message) as any
+        })
+        return res.status === 200;
+    }
+
+    public async putHandshake(url: string, publicKey: string | Uint8Array, bundle: KeyExchangeDataBundle): Promise<boolean> {
+        const res = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': FREESIGNAL_MIME,
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
+            },
+            body: encodeJSON(bundle) as any
+        })
+        return res.status === 201;
+    }
+
+    public async deleteHandshake(url: string, publicKey: string | Uint8Array): Promise<boolean> {
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+                authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
+            }
+        })
+        return res.status === 200;
     }
 
     public async getDatagrams(publicKey: string | Uint8Array, url: string): Promise<Datagram[]> {
@@ -97,17 +136,17 @@ export class FreeSignalAPI {
     }
 
     public createToken(publicKey: Uint8Array): string {
-        const sharedId = crypto.hash(crypto.ECDH.scalarMult(publicKey, this.boxKey.secretKey));
-        return `Bearer ${decodeBase64(this.userId)}:${decodeBase64(sharedId)}`;
+        const signature = crypto.EdDSA.sign(crypto.hash(crypto.ECDH.scalarMult(publicKey, this.boxKey.secretKey)), this.signKey.secretKey);
+        return `Bearer ${this.userId}:${decodeBase64(signature)}`;
     };
 
     protected async digestToken(auth?: string): Promise<{ identityKeys: IdentityKeys, userId: UserId }> {
         if (auth && auth.startsWith("Bearer ")) {
-            const [userId, sharedId] = auth.substring(7).split(":");
+            const [userId, signature] = auth.substring(7).split(":");
             const identityKeys = await this.users.get(userId);
             if (!identityKeys)
                 throw new Error('User not found or invalid auth token');
-            if (verifyUint8Array(crypto.hash(crypto.ECDH.scalarMult(encodeBase64(identityKeys.publicKey), this.boxKey.secretKey)), encodeBase64(sharedId)))
+            if (crypto.EdDSA.verify(crypto.hash(crypto.ECDH.scalarMult(encodeBase64(identityKeys.identityKey), this.boxKey.secretKey)), encodeBase64(signature), encodeBase64(identityKeys.publicKey)))
                 return { identityKeys, userId: auth };
             else
                 throw new Error('Authorization token not valid');
