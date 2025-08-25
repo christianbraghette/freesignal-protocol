@@ -58,14 +58,4 @@ export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Ui
     return { sign: crypto.EdDSA.keyPair(signSecretKey), box: crypto.ECDH.keyPair(boxSecretKey) };
 }
 
-/*export function createAPI(opts: {
-    secretSignKey: Uint8Array;
-    secretBoxKey: Uint8Array;
-    sessions: LocalStorage<UserId, KeySession>;
-    keyExchange: LocalStorage<string, Crypto.KeyPair>;
-    users: LocalStorage<UserId, IdentityKeys>;
-}): FreeSignalAPI {
-    return new FreeSignalAPI(opts);
-}*/
-
 export { UserId, IdentityKeys, Protocols, Datagram, EncryptedData } from "./types";
