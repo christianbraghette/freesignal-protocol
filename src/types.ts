@@ -207,10 +207,9 @@ export namespace Datagram {
             return this._payload;
         }
 
-        public encode(compression: boolean = true): Uint8Array {
-            compression = compression && this.payload != undefined && this.payload.length > 1024;
+        public encode(): Uint8Array {
             const data = concatUint8Array(
-                new Uint8Array(1).fill(this.version | (this.secretKey ? 128 : 0)), //1          | (compression ? 64 : 0)
+                new Uint8Array(1).fill(this.version | (this.secretKey ? 128 : 0)), //1
                 Protocols.encode(this.protocol), //1
                 crypto.UUID.parse(this.id) ?? [], //16
                 numberToUint8Array(this.createdAt, 8), //8

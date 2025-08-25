@@ -33,6 +33,5 @@ bob.digestMessage(aliceack).then(({ session: bobsession, identityKeys }) => {
         ));
 
         console.log(longmsg.encode().length);
-        console.log(longmsg.encode(false).length);
     } else console.log("Error")
 });
