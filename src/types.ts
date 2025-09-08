@@ -422,21 +422,6 @@ class Offsets {
 
 export const FREESIGNAL_MIME = "application/x-freesignal";
 
-enum XFreeSignalDataType {
-    UKNOWN = -1,
-    RAW,
-    NUMBER,
-    STRING,
-    ARRAY,
-    OBJECT,
-}
-namespace XFreeSignalDataType {
-    export function from(type: string): XFreeSignalDataType {
-        const out = Object.values(XFreeSignalDataType).indexOf(type.toLocaleUpperCase());
-        return out;
-    }
-}
-
 /*enum XFreeSignalMethod {
     REQUEST,
     RESPONSE
@@ -470,19 +455,41 @@ export class XFreeSignalBody<T> implements Encodable {
 
 }
 
+enum XFreeSignalDataType {
+    UKNOWN = -1,
+    RAW,
+    NUMBER,
+    STRING,
+    ARRAY,
+    OBJECT,
+}
+namespace XFreeSignalDataType {
+    export function from(type: string): XFreeSignalDataType {
+        const out = Object.values(XFreeSignalDataType).indexOf(type.toLocaleUpperCase());
+        return out;
+    }
+
+    export function stringify(type: XFreeSignalDataType): string {
+        return XFreeSignalDataType[type].toLowerCase();
+    }
+}
 
 export class XFreeSignalData<T> implements Encodable {
 
     public constructor(public data: T) { }
 
-    public get type() {
+    public get _type() {
         return XFreeSignalDataType.from(typeof this.data);
     }
 
+    public get type() {
+        return XFreeSignalDataType.stringify(this._type);
+    }
+
     private dataToArray(): Uint8Array {
-        switch (this.type) {
+        switch (this._type) {
             case XFreeSignalDataType.NUMBER:
-                return numberToArray(this.type);
+                return numberToArray(this._type);
 
             case XFreeSignalDataType.STRING:
                 return encodeUTF8(this.data as string);
@@ -541,7 +548,7 @@ export class XFreeSignalData<T> implements Encodable {
     }
 
     encode(): Uint8Array {
-        return concatArrays(numberToArray(this.type), this.dataToArray());
+        return concatArrays(numberToArray(this._type), this.dataToArray());
     }
 
     toString(): string {
