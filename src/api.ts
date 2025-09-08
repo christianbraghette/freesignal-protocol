@@ -1,10 +1,28 @@
+/**
+ * FreeSignal Protocol
+ * 
+ * Copyright (C) 2025  Christian Braghette
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>
+ */
+
 import { Crypto, KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage } from "@freesignal/interfaces";
 import crypto from "@freesignal/crypto";
 import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
-import { concatArrays, decodeBase64, decodeJSON, encodeBase64, encodeJSON, numberFromArray, numberToArray } from "@freesignal/utils";
-import { Datagram, IdentityKeys, EncryptedData, UserId, FREESIGNAL_MIME } from "./types";
-import fflate from "fflate";
+import { decodeBase64, decodeJSON, encodeBase64, numberFromArray } from "@freesignal/utils";
+import { Datagram, IdentityKeys, EncryptedData, UserId, XFreeSignal, DataEncoder } from "./types";
 
 type DatagramId = string;
 
@@ -68,9 +86,9 @@ export class FreeSignalAPI {
         const res = await fetch(url, {
             method: 'POST',
             headers: {
-                'Content-Type': FREESIGNAL_MIME
+                'Content-Type': XFreeSignal.MIME
             },
-            body: encodeJSON(message) as any
+            body: XFreeSignal.encodeBody('data', message)
         })
         return res.status === 200;
     }
@@ -79,10 +97,10 @@ export class FreeSignalAPI {
         const res = await fetch(url, {
             method: 'PUT',
             headers: {
-                'Content-Type': FREESIGNAL_MIME,
+                'Content-Type': XFreeSignal.MIME,
                 authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             },
-            body: encodeJSON(bundle) as any
+            body: XFreeSignal.encodeBody('data', bundle)
         })
         return res.status === 201;
     }
@@ -104,31 +122,31 @@ export class FreeSignalAPI {
                 authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             }
         })
-        return this.unpackDatagrams(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
+        return DataEncoder.from<Uint8Array[]>(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString())).data.map(array => Datagram.from(array));
     }
 
     public async postDatagrams(datagrams: Datagram[], publicKey: string | Uint8Array, url: string): Promise<number> {
-        const data = await this.encryptData(this.packDatagrams(datagrams), UserId.getUserId(publicKey).toString());
+         const data = await this.encryptData(new DataEncoder(datagrams.map(datagram => Datagram.from(datagram).encode())).encode(), UserId.getUserId(publicKey).toString());
         const res = await fetch(url, {
             method: 'POST',
             headers: {
-                'Content-Type': FREESIGNAL_MIME,
+                'Content-Type': XFreeSignal.MIME,
                 authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             },
-            body: data.encode() as any
+            body: XFreeSignal.encodeBody('data', data.encode())
         });
         return numberFromArray(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
     }
 
     public async deleteDatagrams(datagramIds: DatagramId[], publicKey: string | Uint8Array, url: string): Promise<number> {
-        const data = await this.encryptData(this.packIdList(datagramIds), UserId.getUserId(publicKey).toString());
+        const data = await this.encryptData(new DataEncoder(datagramIds.map(datagramId => crypto.UUID.parse(datagramId))).encode(), UserId.getUserId(publicKey).toString());
         const res = await fetch(url, {
             method: 'DELETE',
             headers: {
-                'Content-Type': FREESIGNAL_MIME,
+                'Content-Type': XFreeSignal.MIME,
                 authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             },
-            body: data.encode() as any
+            body: XFreeSignal.encodeBody('data', data.encode())
         });
         return numberFromArray(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
     }
@@ -150,52 +168,5 @@ export class FreeSignalAPI {
                 throw new Error('Authorization token not valid');
         }
         throw new Error('Authorization header is required');
-    }
-
-    protected packIdList(datagramIds: DatagramId[]): Uint8Array {
-        return datagramIds.map(datagramId => crypto.UUID.parse(datagramId)).reduce((prev, curr) => new Uint8Array([...prev, ...curr]), new Uint8Array())
-    }
-
-    protected unpackIdList(data: Uint8Array): DatagramId[] {
-        const ids: DatagramId[] = []
-        for (let i = 0; i < data.length; i += 16) {
-            ids.push(crypto.UUID.stringify(data.subarray(i, i + 16)));
-        }
-        return ids;
-    }
-
-    protected packDatagrams(messages: Datagram[]): Uint8Array {
-        return fflate.deflateSync(concatArrays(...messages.flatMap(
-            datagram => {
-                const encoded = Datagram.from(datagram).encode();
-                return [numberToArray(encoded.length, 8), encoded]
-            }
-        )))
-    }
-
-    protected unpackDatagrams(data: Uint8Array): Datagram[] {
-        const messages: Datagram[] = [];
-        let offset = 0
-        data = fflate.inflateSync(data);
-        while (offset < data.length) {
-            const length = data.subarray(offset, offset + 8);
-            if (length.length < 8) {
-                throw new Error('Invalid message length');
-            }
-            const messageLength = numberFromArray(length);
-            offset += 8;
-            if (offset + messageLength > data.length) {
-                throw new Error('Invalid message length');
-            }
-            const messageData = data.subarray(offset, offset + messageLength);
-            offset += messageLength;
-            try {
-                const datagram = Datagram.from(messageData);
-                messages.push(datagram);
-            } catch (error) {
-                throw new Error('Invalid datagram format');
-            }
-        }
-        return messages;
     }
 }

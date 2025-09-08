@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { concatArrays, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, numberFromArray, numberToArray } from "@freesignal/utils";
+import { concatArrays, decodeBase64, decodeJSON, decodeUTF8, encodeBase64, encodeJSON, encodeUTF8, numberFromArray, numberToArray } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import { Encodable } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
@@ -420,42 +420,7 @@ class Offsets {
 
 }
 
-export const FREESIGNAL_MIME = "application/x-freesignal";
-
-/*enum XFreeSignalMethod {
-    REQUEST,
-    RESPONSE
-}*/
-
-enum XFreeSignalType {
-    DATA,
-    ERROR
-}
-
-export class XFreeSignalBody<T> implements Encodable {
-    public static readonly version = 1;
-
-    public constructor(public readonly type: 'data' | 'error', public data: T) { }
-
-    encode(compressed = false): Uint8Array {
-        const data = new XFreeSignalData(this.data).encode();
-        return concatArrays(numberToArray(((this.type === 'data' ? XFreeSignalType.DATA : XFreeSignalType.ERROR) << 6) + XFreeSignalBody.version), compressed ? fflate.deflateSync(data) : data);
-    }
-
-    toString(): string {
-        return "[Object XFreeSignalBody]";
-    }
-
-    toJSON(): string {
-        return JSON.stringify({
-            type: this.type,
-            data: this.data
-        });
-    }
-
-}
-
-enum XFreeSignalDataType {
+enum DataType {
     UKNOWN = -1,
     RAW,
     NUMBER,
@@ -463,105 +428,169 @@ enum XFreeSignalDataType {
     ARRAY,
     OBJECT,
 }
-namespace XFreeSignalDataType {
-    export function from(type: string): XFreeSignalDataType {
-        const out = Object.values(XFreeSignalDataType).indexOf(type.toLocaleUpperCase());
-        return out;
+namespace DataType {
+    export function getType(type: string): DataType {
+        return Object.values(DataType).indexOf(type.toLocaleUpperCase());
     }
 
-    export function stringify(type: XFreeSignalDataType): string {
-        return XFreeSignalDataType[type].toLowerCase();
+    export function getName(type: DataType): string {
+        return DataType[type].toLowerCase();
+    }
+
+    export function from(data: any): DataType {
+        if (data instanceof Uint8Array)
+            return DataType.RAW;
+        return getType(typeof data);
     }
 }
 
-export class XFreeSignalData<T> implements Encodable {
+export class DataEncoder<T> implements Encodable {
+    public readonly type: string;
 
-    public constructor(public data: T) { }
-
-    public get _type() {
-        return XFreeSignalDataType.from(typeof this.data);
+    public constructor(public readonly data: T) {
+        this.type = DataType.getName(DataType.from(this.data));
     }
 
-    public get type() {
-        return XFreeSignalDataType.stringify(this._type);
+    protected get _type(): DataType {
+        return DataType.getType(this.type);
     }
 
-    private dataToArray(): Uint8Array {
+    public encode(): Uint8Array {
+        let data: Uint8Array
         switch (this._type) {
-            case XFreeSignalDataType.NUMBER:
-                return numberToArray(this._type);
+            case DataType.RAW:
+                data = this.data as Uint8Array;
+                break;
 
-            case XFreeSignalDataType.STRING:
-                return encodeUTF8(this.data as string);
+            case DataType.NUMBER:
+                data = numberToArray(this._type);
+                break;
 
-            case XFreeSignalDataType.ARRAY:
-                return concatArrays(...Array.from(this.data as any[]).flatMap(value => {
-                    const data = new XFreeSignalData(value).encode();
+            case DataType.STRING:
+                data = encodeUTF8(this.data as string);
+                break;
+
+            case DataType.ARRAY:
+                data = concatArrays(...Array.from(this.data as any[]).flatMap(value => {
+                    const data = new DataEncoder(value).encode();
                     return [numberToArray(data.length, 8), data]
                 }));
+                break;
 
-            case XFreeSignalDataType.OBJECT:
-                return encodeUTF8(JSON.stringify(this.data))
+            case DataType.OBJECT:
+                data = encodeJSON(this.data);
+                break;
 
             default:
-                return new Uint8Array();
+                throw new Error("Uknown type");
         }
+        return concatArrays(numberToArray(this._type), data);
     }
 
-    private arrayToData(array: Uint8Array) {
+    public toString(): string {
+        return "[Object XFreeSignalData]";
+    }
+
+    public toJSON(): string {
+        return JSON.stringify(this.data);
+    }
+
+    public static from<T = any>(array: Uint8Array) {
         const type = array[0];
-        let data = array.subarray(1);
+        let rawData = array.subarray(1), data: T;
         switch (type) {
-            case XFreeSignalDataType.NUMBER:
-                this.data = numberFromArray(data) as T;
+            case DataType.RAW:
+                data = rawData as T;
                 break;
 
-            case XFreeSignalDataType.STRING:
-                this.data = decodeUTF8(data) as T;
+            case DataType.NUMBER:
+                data = numberFromArray(rawData) as T;
                 break;
 
-            case XFreeSignalDataType.ARRAY:
+            case DataType.STRING:
+                data = decodeUTF8(rawData) as T;
+                break;
+
+            case DataType.ARRAY:
                 const arrayData: any[] = [];
                 let offset = 0;
-                while (offset < data.length) {
-                    const length = data.subarray(offset, offset + 8);
+                while (offset < rawData.length) {
+                    const length = rawData.subarray(offset, offset + 8);
                     if (length.length < 8)
                         throw new Error('Invalid data length');
                     const messageLength = numberFromArray(length);
                     offset += 8;
-                    if (offset + messageLength > data.length) {
+                    if (offset + messageLength > rawData.length) {
                         throw new Error('Invalid data length');
                     }
-                    arrayData.push(data.subarray(offset, offset + messageLength));
+                    arrayData.push(rawData.subarray(offset, offset + messageLength));
                     offset += messageLength;
                 }
-                this.data = arrayData as T;
+                data = arrayData as T;
                 break;
 
-            case XFreeSignalDataType.OBJECT:
-                this.data = JSON.parse(decodeUTF8(data)) as T;
+            case DataType.OBJECT:
+                data = decodeJSON(rawData);
                 break;
 
             default:
                 throw new Error('Invalid data format');
         }
+        return new DataEncoder<T>(data);
+    }
+}
+
+export namespace XFreeSignal {
+    export const MIME = "application/x-freesignal";
+    export const version = 1;
+
+    export function encodeBody(type: 'data' | 'error', data: any, compressed = false): BodyInit {
+        return new Body(type, data).encode(compressed) as BodyInit;
     }
 
-    encode(): Uint8Array {
-        return concatArrays(numberToArray(this._type), this.dataToArray());
+    export function decodeBody<T = any>(body: Uint8Array): Body<T> {
+        return Body.from(body);
     }
 
-    toString(): string {
-        return "[Object XFreeSignalData]";
+    enum BodyType {
+        DATA,
+        ERROR
+    }
+    namespace BodyType {
+        export function getName(type: BodyType): 'data' | 'error' {
+            return BodyType[type].toLowerCase() as any;
+        }
     }
 
-    toJSON(): string {
-        return JSON.stringify(this.data);
+    class Body<T> implements Encodable {
+
+        public constructor(public readonly type: 'data' | 'error', public readonly data: T) { }
+
+        encode(compressed = false): Uint8Array {
+            const data = new DataEncoder(this.data).encode();
+            return concatArrays(
+                numberToArray(
+                    ((this.type === 'data' ? BodyType.DATA : BodyType.ERROR) << 6)
+                    + (compressed ? 32 : 0)
+                    + XFreeSignal.version
+                ), compressed ? fflate.deflateSync(data) : data);
+        }
+
+        toString(): string {
+            return "[Object XFreeSignalBody]";
+        }
+
+        toJSON(): string {
+            return JSON.stringify({
+                type: this.type,
+                data: this.data
+            });
+        }
+
+        public static from<T = any>(array: Uint8Array): Body<T> {
+            return new Body<T>(BodyType.getName((array[0] & 64) >> 6), DataEncoder.from((array[0] & 32) >> 5 === 1 ? fflate.inflateSync(array.subarray(1)) : array.subarray(1)).data);
+        }
     }
 
-    public static from<T>(data: Uint8Array) {
-        const obj = new XFreeSignalData<T>(undefined as T);
-        obj.arrayToData(data);
-        return obj;
-    }
+
 }
