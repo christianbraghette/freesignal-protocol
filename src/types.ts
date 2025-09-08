@@ -592,5 +592,4 @@ export namespace XFreeSignal {
         }
     }
 
-
 }

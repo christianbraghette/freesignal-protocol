@@ -79,7 +79,10 @@ export class FreeSignalAPI {
         const res = await fetch(`${url}/${userId ?? ''}`, {
             method: 'GET'
         })
-        return decodeJSON(new Uint8Array(await res.arrayBuffer()))
+        const body = XFreeSignal.decodeBody(new Uint8Array(await res.arrayBuffer()))
+        if (body.type === 'error')
+            throw new Error(body.data);
+        return body.data;
     }
 
     public async postHandshake(url: string, message: KeyExchangeSynMessage): Promise<boolean> {
@@ -121,12 +124,17 @@ export class FreeSignalAPI {
             headers: {
                 authorization: this.createToken(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey))
             }
-        })
-        return DataEncoder.from<Uint8Array[]>(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString())).data.map(array => Datagram.from(array));
+        });
+        const body = XFreeSignal.decodeBody(new Uint8Array(await res.arrayBuffer()));
+        if (body.type === 'error')
+            throw new Error(body.data);
+        return DataEncoder.from<Uint8Array[]>(
+            await this.decryptData(body.data, UserId.getUserId(publicKey).toString())
+        ).data.map(array => Datagram.from(array));
     }
 
     public async postDatagrams(datagrams: Datagram[], publicKey: string | Uint8Array, url: string): Promise<number> {
-         const data = await this.encryptData(new DataEncoder(datagrams.map(datagram => Datagram.from(datagram).encode())).encode(), UserId.getUserId(publicKey).toString());
+        const data = await this.encryptData(new DataEncoder(datagrams.map(datagram => Datagram.from(datagram).encode())).encode(), UserId.getUserId(publicKey).toString());
         const res = await fetch(url, {
             method: 'POST',
             headers: {
@@ -135,7 +143,10 @@ export class FreeSignalAPI {
             },
             body: XFreeSignal.encodeBody('data', data.encode())
         });
-        return numberFromArray(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
+        const body = XFreeSignal.decodeBody(new Uint8Array(await res.arrayBuffer()));
+        if (body.type === 'error')
+            throw new Error(body.data);
+        return DataEncoder.from<number>(await this.decryptData(body.data, UserId.getUserId(publicKey).toString())).data;
     }
 
     public async deleteDatagrams(datagramIds: DatagramId[], publicKey: string | Uint8Array, url: string): Promise<number> {
@@ -148,7 +159,10 @@ export class FreeSignalAPI {
             },
             body: XFreeSignal.encodeBody('data', data.encode())
         });
-        return numberFromArray(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
+        const body = XFreeSignal.decodeBody(new Uint8Array(await res.arrayBuffer()));
+        if (body.type === 'error')
+            throw new Error(body.data);
+        return DataEncoder.from<number>(await this.decryptData(body.data, UserId.getUserId(publicKey).toString())).data;
     }
 
     public createToken(publicKey: Uint8Array): string {
