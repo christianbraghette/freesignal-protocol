@@ -19,7 +19,7 @@
 
 import crypto from "@freesignal/crypto";
 import { Crypto } from "@freesignal/interfaces";
-import { concatUint8Array, decodeBase64, encodeBase64, verifyUint8Array } from "@freesignal/utils";
+import { concatArrays, decodeBase64, encodeBase64, verifyArrays } from "@freesignal/utils";
 import { EncryptedData, EncryptedDataConstructor } from "./types";
 
 type ExportedKeySession = {
@@ -140,7 +140,8 @@ export class KeySession {
     public decrypt(payload: Uint8Array | EncryptedData): Uint8Array | undefined {
         const encrypted = EncryptedData.from(payload);
         const publicKey = encrypted.publicKey;
-        if (!verifyUint8Array(publicKey, this._remoteKey)) {
+        if (!this._remoteKey) throw new Error("Missing remoteKey");
+        if (!verifyArrays(publicKey, this._remoteKey)) {
             while (this.receivingCount < encrypted.previous)
                 this.previousKeys.set(this.receivingCount, this.getReceivingKey());
             this.setRemoteKey(publicKey);
@@ -165,7 +166,7 @@ export class KeySession {
      */
     public toJSON(): ExportedKeySession {
         return {
-            secretKey: decodeBase64(concatUint8Array(this.keyPair.secretKey)),
+            secretKey: decodeBase64(concatArrays(this.keyPair.secretKey)),
             remoteKey: decodeBase64(this._remoteKey),
             rootKey: decodeBase64(this.rootKey),
             sendingChain: decodeBase64(this.sendingChain),

@@ -17,11 +17,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { concatUint8Array, decodeBase64, decodeJSON, decodeUTF8, encodeBase64, encodeJSON, encodeUTF8, numberFromUint8Array, numberToUint8Array } from "@freesignal/utils";
+import { concatArrays, decodeBase64, decodeUTF8, encodeBase64, encodeUTF8, numberFromArray, numberToArray } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import { Encodable } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
-import { Response } from 'express';
 import fflate from 'fflate';
 
 export type UserId = string;
@@ -76,7 +75,7 @@ export namespace IdentityKeys {
         }
 
         encode(): Uint8Array {
-            return concatUint8Array(encodeBase64(this.publicKey), encodeBase64(this.identityKey));
+            return concatArrays(encodeBase64(this.publicKey), encodeBase64(this.identityKey));
         }
 
         toString(): string {
@@ -118,11 +117,11 @@ export namespace Protocols {
     }
 
     export function encode(protocol: Protocols, length?: number): Uint8Array {
-        return numberToUint8Array(Protocols.toCode(protocol), length);
+        return numberToArray(Protocols.toCode(protocol), length);
     }
 
     export function decode(array: Uint8Array): Protocols {
-        return Protocols.fromCode(numberFromUint8Array(array));
+        return Protocols.fromCode(numberFromArray(array));
     }
 }
 
@@ -160,7 +159,7 @@ export namespace Datagram {
                     this.version = data[0] & 127;
                     this.protocol = Protocols.decode(data.subarray(1, 2));
                     this.id = crypto.UUID.stringify(data.subarray(2, 18));
-                    this.createdAt = numberFromUint8Array(data.subarray(18, 26));
+                    this.createdAt = numberFromArray(data.subarray(18, 26));
                     this.sender = decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
                     this.receiver = decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramConstructor.headerOffset));
                     if (data[0] & 128)
@@ -210,17 +209,17 @@ export namespace Datagram {
         }
 
         public encode(): Uint8Array {
-            const data = concatUint8Array(
+            const data = concatArrays(
                 new Uint8Array(1).fill(this.version | (this.secretKey ? 128 : 0)), //1
                 Protocols.encode(this.protocol), //1
                 crypto.UUID.parse(this.id) ?? [], //16
-                numberToUint8Array(this.createdAt, 8), //8
+                numberToArray(this.createdAt, 8), //8
                 encodeBase64(this.sender), //32
                 encodeBase64(this.receiver), //32
                 this._payload ?? new Uint8Array()
             );
             if (this.secretKey) this._signature = crypto.EdDSA.sign(data, this.secretKey);
-            return concatUint8Array(data, this._signature ?? new Uint8Array());
+            return concatArrays(data, this._signature ?? new Uint8Array());
         }
 
         public sign(secretKey: Uint8Array): this {
@@ -342,25 +341,25 @@ export class EncryptedDataConstructor implements EncryptedData {
             return this;
         }
         if (typeof arrays[0] === 'number')
-            arrays[0] = numberToUint8Array(arrays[0], EncryptedDataConstructor.countLength);
+            arrays[0] = numberToArray(arrays[0], EncryptedDataConstructor.countLength);
         if (typeof arrays[1] === 'number')
-            arrays[1] = numberToUint8Array(arrays[1], EncryptedDataConstructor.countLength);
+            arrays[1] = numberToArray(arrays[1], EncryptedDataConstructor.countLength);
         if (arrays.length === 6) {
-            arrays.unshift(typeof arrays[5] === 'number' ? numberToUint8Array(arrays[5]) : arrays[5]);
+            arrays.unshift(typeof arrays[5] === 'number' ? numberToArray(arrays[5]) : arrays[5]);
             arrays.pop();
         } else if (arrays.length > 1) {
-            arrays.unshift(numberToUint8Array(KeySession.version));
+            arrays.unshift(numberToArray(KeySession.version));
         }
-        this.raw = concatUint8Array(...arrays);
+        this.raw = concatArrays(...arrays);
     }
 
     public get length() { return this.raw.length; }
 
-    public get version() { return numberFromUint8Array(new Uint8Array(this.raw.buffer, ...Offsets.version.get)); }
+    public get version() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.version.get)); }
 
-    public get count() { return numberFromUint8Array(new Uint8Array(this.raw.buffer, ...Offsets.count.get)); }
+    public get count() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.count.get)); }
 
-    public get previous() { return numberFromUint8Array(new Uint8Array(this.raw.buffer, ...Offsets.previous.get)); }
+    public get previous() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.previous.get)); }
 
     public get publicKey() { return new Uint8Array(this.raw.buffer, ...Offsets.publicKey.get); }
 
@@ -438,10 +437,10 @@ namespace XFreeSignalDataType {
     }
 }
 
-enum XFreeSignalMethod {
+/*enum XFreeSignalMethod {
     REQUEST,
     RESPONSE
-}
+}*/
 
 enum XFreeSignalType {
     DATA,
@@ -453,16 +452,20 @@ export class XFreeSignalBody<T> implements Encodable {
 
     public constructor(public readonly type: 'data' | 'error', public data: T) { }
 
-    encode(): Uint8Array {
-        throw new Error("Method not implemented.");
+    encode(compressed = false): Uint8Array {
+        const data = new XFreeSignalData(this.data).encode();
+        return concatArrays(numberToArray(((this.type === 'data' ? XFreeSignalType.DATA : XFreeSignalType.ERROR) << 6) + XFreeSignalBody.version), compressed ? fflate.deflateSync(data) : data);
     }
 
     toString(): string {
-        throw new Error("Method not implemented.");
+        return "[Object XFreeSignalBody]";
     }
-    
+
     toJSON(): string {
-        throw new Error("Method not implemented.");
+        return JSON.stringify({
+            type: this.type,
+            data: this.data
+        });
     }
 
 }
@@ -470,8 +473,7 @@ export class XFreeSignalBody<T> implements Encodable {
 
 export class XFreeSignalData<T> implements Encodable {
 
-    public constructor(data: T)
-    public constructor(private data?: T) { }
+    public constructor(public data: T) { }
 
     public get type() {
         return XFreeSignalDataType.from(typeof this.data);
@@ -480,15 +482,15 @@ export class XFreeSignalData<T> implements Encodable {
     private dataToArray(): Uint8Array {
         switch (this.type) {
             case XFreeSignalDataType.NUMBER:
-                return numberToUint8Array(this.type);
+                return numberToArray(this.type);
 
             case XFreeSignalDataType.STRING:
                 return encodeUTF8(this.data as string);
 
             case XFreeSignalDataType.ARRAY:
-                return concatUint8Array(...Array.from(this.data as any[]).flatMap(value => {
+                return concatArrays(...Array.from(this.data as any[]).flatMap(value => {
                     const data = new XFreeSignalData(value).encode();
-                    return [numberToUint8Array(data.length, 8), data]
+                    return [numberToArray(data.length, 8), data]
                 }));
 
             case XFreeSignalDataType.OBJECT:
@@ -504,7 +506,7 @@ export class XFreeSignalData<T> implements Encodable {
         let data = array.subarray(1);
         switch (type) {
             case XFreeSignalDataType.NUMBER:
-                this.data = numberFromUint8Array(data) as T;
+                this.data = numberFromArray(data) as T;
                 break;
 
             case XFreeSignalDataType.STRING:
@@ -518,7 +520,7 @@ export class XFreeSignalData<T> implements Encodable {
                     const length = data.subarray(offset, offset + 8);
                     if (length.length < 8)
                         throw new Error('Invalid data length');
-                    const messageLength = numberFromUint8Array(length);
+                    const messageLength = numberFromArray(length);
                     offset += 8;
                     if (offset + messageLength > data.length) {
                         throw new Error('Invalid data length');
@@ -539,7 +541,7 @@ export class XFreeSignalData<T> implements Encodable {
     }
 
     encode(): Uint8Array {
-        return concatUint8Array(numberToUint8Array(this.type), this.dataToArray());
+        return concatArrays(numberToArray(this.type), this.dataToArray());
     }
 
     toString(): string {
@@ -551,7 +553,7 @@ export class XFreeSignalData<T> implements Encodable {
     }
 
     public static from<T>(data: Uint8Array) {
-        const obj = new XFreeSignalData<T>();
+        const obj = new XFreeSignalData<T>(undefined as T);
         obj.arrayToData(data);
         return obj;
     }

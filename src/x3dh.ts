@@ -20,7 +20,7 @@
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
-import { concatUint8Array, decodeBase64, encodeBase64, encodeUTF8, verifyUint8Array } from "@freesignal/utils";
+import { concatArrays, decodeBase64, encodeBase64, encodeUTF8, verifyArrays } from "@freesignal/utils";
 import { IdentityKeys } from "./types";
 
 export class KeyExchange {
@@ -98,7 +98,7 @@ export class KeyExchange {
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession({ remoteKey: identityKey, rootKey });
-        const cyphertext = session.encrypt(concatUint8Array(crypto.hash(this._identityKey.publicKey), crypto.hash(identityKey)));
+        const cyphertext = session.encrypt(concatArrays(crypto.hash(this._identityKey.publicKey), crypto.hash(identityKey)));
         if (!cyphertext) throw new Error("Decryption error");
         return {
             session,
@@ -136,7 +136,7 @@ export class KeyExchange {
         const session = new KeySession({ secretKey: this._identityKey.secretKey, rootKey })
         const cleartext = session.decrypt(encodeBase64(message.associatedData));
         if (!cleartext) throw new Error("Error decrypting ACK message");
-        if (!verifyUint8Array(cleartext, concatUint8Array(crypto.hash(identityKey), crypto.hash(this._identityKey.publicKey))))
+        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey), crypto.hash(this._identityKey.publicKey))))
             throw new Error("Error verifing Associated Data");
         return {
             session,

@@ -13,7 +13,7 @@
   "dependencies": {
     "@freesignal/crypto": "^0.3.0",
     "@freesignal/interfaces": "^0.1.1",
-    "@freesignal/utils": "^1.1.0",
+    "@freesignal/utils": "^1.2.0",
     "base64-js": "^1.5.1",
     "fflate": "^0.8.2",
     "js-sha3": "^0.9.3",
@@ -21,7 +21,6 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
-    "@types/express": "^5.0.3",
     "@types/node": "^24.2.1"
   }
 }

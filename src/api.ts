@@ -2,7 +2,7 @@ import { Crypto, KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, 
 import crypto from "@freesignal/crypto";
 import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
-import { concatUint8Array, decodeBase64, decodeJSON, encodeBase64, encodeJSON, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "@freesignal/utils";
+import { concatArrays, decodeBase64, decodeJSON, encodeBase64, encodeJSON, numberFromArray, numberToArray } from "@freesignal/utils";
 import { Datagram, IdentityKeys, EncryptedData, UserId, FREESIGNAL_MIME } from "./types";
 import fflate from "fflate";
 
@@ -117,7 +117,7 @@ export class FreeSignalAPI {
             },
             body: data.encode() as any
         });
-        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
+        return numberFromArray(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
     }
 
     public async deleteDatagrams(datagramIds: DatagramId[], publicKey: string | Uint8Array, url: string): Promise<number> {
@@ -130,7 +130,7 @@ export class FreeSignalAPI {
             },
             body: data.encode() as any
         });
-        return numberFromUint8Array(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
+        return numberFromArray(await this.decryptData(new Uint8Array(await res.arrayBuffer()), UserId.getUserId(publicKey).toString()));
     }
 
     public createToken(publicKey: Uint8Array): string {
@@ -165,10 +165,10 @@ export class FreeSignalAPI {
     }
 
     protected packDatagrams(messages: Datagram[]): Uint8Array {
-        return fflate.deflateSync(concatUint8Array(...messages.flatMap(
+        return fflate.deflateSync(concatArrays(...messages.flatMap(
             datagram => {
                 const encoded = Datagram.from(datagram).encode();
-                return [numberToUint8Array(encoded.length, 8), encoded]
+                return [numberToArray(encoded.length, 8), encoded]
             }
         )))
     }
@@ -182,7 +182,7 @@ export class FreeSignalAPI {
             if (length.length < 8) {
                 throw new Error('Invalid message length');
             }
-            const messageLength = numberFromUint8Array(length);
+            const messageLength = numberFromArray(length);
             offset += 8;
             if (offset + messageLength > data.length) {
                 throw new Error('Invalid message length');
