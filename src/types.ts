@@ -17,10 +17,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { concatUint8Array, decodeBase64, encodeBase64, numberFromUint8Array, numberToUint8Array } from "@freesignal/utils";
+import { concatUint8Array, decodeBase64, decodeJSON, decodeUTF8, encodeBase64, encodeJSON, encodeUTF8, numberFromUint8Array, numberToUint8Array } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import { Encodable } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet";
+import { Response } from 'express';
+import fflate from 'fflate';
 
 export type UserId = string;
 export namespace UserId {
@@ -417,4 +419,140 @@ class Offsets {
     static readonly nonce = Offsets.set(Offsets.publicKey.end!, EncryptedDataConstructor.nonceLength);
     static readonly ciphertext = Offsets.set(Offsets.nonce.end!, undefined);
 
+}
+
+export const FREESIGNAL_MIME = "application/x-freesignal";
+
+enum XFreeSignalDataType {
+    UKNOWN = -1,
+    RAW,
+    NUMBER,
+    STRING,
+    ARRAY,
+    OBJECT,
+}
+namespace XFreeSignalDataType {
+    export function from(type: string): XFreeSignalDataType {
+        const out = Object.values(XFreeSignalDataType).indexOf(type.toLocaleUpperCase());
+        return out;
+    }
+}
+
+enum XFreeSignalMethod {
+    REQUEST,
+    RESPONSE
+}
+
+enum XFreeSignalType {
+    DATA,
+    ERROR
+}
+
+export class XFreeSignalBody<T> implements Encodable {
+    public static readonly version = 1;
+
+    public constructor(public readonly type: 'data' | 'error', public data: T) { }
+
+    encode(): Uint8Array {
+        throw new Error("Method not implemented.");
+    }
+
+    toString(): string {
+        throw new Error("Method not implemented.");
+    }
+    
+    toJSON(): string {
+        throw new Error("Method not implemented.");
+    }
+
+}
+
+
+export class XFreeSignalData<T> implements Encodable {
+
+    public constructor(data: T)
+    public constructor(private data?: T) { }
+
+    public get type() {
+        return XFreeSignalDataType.from(typeof this.data);
+    }
+
+    private dataToArray(): Uint8Array {
+        switch (this.type) {
+            case XFreeSignalDataType.NUMBER:
+                return numberToUint8Array(this.type);
+
+            case XFreeSignalDataType.STRING:
+                return encodeUTF8(this.data as string);
+
+            case XFreeSignalDataType.ARRAY:
+                return concatUint8Array(...Array.from(this.data as any[]).flatMap(value => {
+                    const data = new XFreeSignalData(value).encode();
+                    return [numberToUint8Array(data.length, 8), data]
+                }));
+
+            case XFreeSignalDataType.OBJECT:
+                return encodeUTF8(JSON.stringify(this.data))
+
+            default:
+                return new Uint8Array();
+        }
+    }
+
+    private arrayToData(array: Uint8Array) {
+        const type = array[0];
+        let data = array.subarray(1);
+        switch (type) {
+            case XFreeSignalDataType.NUMBER:
+                this.data = numberFromUint8Array(data) as T;
+                break;
+
+            case XFreeSignalDataType.STRING:
+                this.data = decodeUTF8(data) as T;
+                break;
+
+            case XFreeSignalDataType.ARRAY:
+                const arrayData: any[] = [];
+                let offset = 0;
+                while (offset < data.length) {
+                    const length = data.subarray(offset, offset + 8);
+                    if (length.length < 8)
+                        throw new Error('Invalid data length');
+                    const messageLength = numberFromUint8Array(length);
+                    offset += 8;
+                    if (offset + messageLength > data.length) {
+                        throw new Error('Invalid data length');
+                    }
+                    arrayData.push(data.subarray(offset, offset + messageLength));
+                    offset += messageLength;
+                }
+                this.data = arrayData as T;
+                break;
+
+            case XFreeSignalDataType.OBJECT:
+                this.data = JSON.parse(decodeUTF8(data)) as T;
+                break;
+
+            default:
+                throw new Error('Invalid data format');
+        }
+    }
+
+    encode(): Uint8Array {
+        return concatUint8Array(numberToUint8Array(this.type), this.dataToArray());
+    }
+
+    toString(): string {
+        return "[Object XFreeSignalData]";
+    }
+
+    toJSON(): string {
+        return JSON.stringify(this.data);
+    }
+
+    public static from<T>(data: Uint8Array) {
+        const obj = new XFreeSignalData<T>();
+        obj.arrayToData(data);
+        return obj;
+    }
 }

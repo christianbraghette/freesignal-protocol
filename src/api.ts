@@ -3,10 +3,8 @@ import crypto from "@freesignal/crypto";
 import { KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 import { concatUint8Array, decodeBase64, decodeJSON, encodeBase64, encodeJSON, numberFromUint8Array, numberToUint8Array, verifyUint8Array } from "@freesignal/utils";
-import { Datagram, IdentityKeys, EncryptedData, UserId } from "./types";
+import { Datagram, IdentityKeys, EncryptedData, UserId, FREESIGNAL_MIME } from "./types";
 import fflate from "fflate";
-
-export const FREESIGNAL_MIME = "application/x-freesignal";
 
 type DatagramId = string;
 
