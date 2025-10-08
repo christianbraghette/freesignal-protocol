@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { Crypto, KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage } from "@freesignal/interfaces";
+import { Crypto, Database, KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage } from "@freesignal/interfaces";
 import crypto from "@freesignal/crypto";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
@@ -35,19 +35,19 @@ export class FreeSignalAPI {
 
     public readonly userId: UserId;
 
-    public constructor(opts: {
+    public constructor(
         secretSignKey: Uint8Array,
         secretBoxKey: Uint8Array,
-        sessions: LocalStorage<UserId, ExportedKeySession>,
-        keyExchange: LocalStorage<string, Crypto.KeyPair>,
-        users: LocalStorage<UserId, IdentityKeys>
-    }) {
-        const { secretSignKey, secretBoxKey, sessions, keyExchange, users } = opts;
+        storage: Database<{
+            sessions: LocalStorage<UserId, ExportedKeySession>,
+            keyExchange: LocalStorage<string, Crypto.KeyPair>,
+            users: LocalStorage<UserId, IdentityKeys>
+        }>) {
         this.signKey = crypto.EdDSA.keyPair(secretSignKey);
         this.boxKey = crypto.ECDH.keyPair(secretBoxKey);
-        this.sessions = sessions;
-        this.keyExchange = new KeyExchange(secretSignKey, secretBoxKey, keyExchange);
-        this.users = users;
+        this.sessions = storage.sessions;
+        this.keyExchange = new KeyExchange(secretSignKey, secretBoxKey, storage.keyExchange);
+        this.users = storage.users;
         this.userId = UserId.getUserId(this.signKey.publicKey).toString();
     }
 
