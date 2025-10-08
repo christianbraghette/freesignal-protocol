@@ -34,7 +34,7 @@ export namespace UserId {
         }
 
         public toJSON(): string {
-            return JSON.stringify(this.toString());
+            return this.toString();
         }
 
         public toUint8Array(): Uint8Array {
@@ -83,7 +83,7 @@ export namespace IdentityKeys {
         }
 
         toJSON(): string {
-            throw JSON.stringify(this.toString());
+            throw this.toString();
         }
     }
 
@@ -232,7 +232,7 @@ export namespace Datagram {
         }
 
         public toJSON(): string {
-            return JSON.stringify(this.toString());
+            return this.toString();
         }
     }
 
@@ -307,7 +307,14 @@ export interface EncryptedData extends Encodable {
     /**
      * Returns the decoded object as a JSON string.
      */
-    toJSON(): string;
+    toJSON(): {
+        version: number;
+        count: number;
+        previous: number;
+        publicKey: string;
+        nonce: string;
+        ciphertext: string;
+    };
 }
 export class EncryptedData {
 
@@ -375,15 +382,15 @@ export class EncryptedDataConstructor implements EncryptedData {
         return decodeBase64(this.raw);
     }
 
-    public toJSON(): string {
-        return JSON.stringify({
+    public toJSON() {
+        return {
             version: this.version,
             count: this.count,
             previous: this.previous,
             publicKey: decodeBase64(this.publicKey),
             nonce: decodeBase64(this.nonce),
             ciphertext: decodeBase64(this.ciphertext)
-        });
+        };
     }
 }
 
@@ -491,8 +498,8 @@ export class DataEncoder<T> implements Encodable {
         return "[Object XFreeSignalData]";
     }
 
-    public toJSON(): string {
-        return JSON.stringify(this.data);
+    public toJSON(): T {
+        return this.data;
     }
 
     public static from<T = any>(array: Uint8Array) {
@@ -580,11 +587,11 @@ export namespace XFreeSignal {
             return "[Object XFreeSignalBody]";
         }
 
-        toJSON(): string {
-            return JSON.stringify({
+        toJSON() {
+            return {
                 type: this.type,
                 data: this.data
-            });
+            };
         }
 
         public static from<T = any>(array: Uint8Array): Body<T> {

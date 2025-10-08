@@ -19,9 +19,9 @@
 
 import { Crypto, KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage } from "@freesignal/interfaces";
 import crypto from "@freesignal/crypto";
-import { KeySession } from "./double-ratchet";
+import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
-import { decodeBase64, decodeJSON, encodeBase64, numberFromArray } from "@freesignal/utils";
+import { decodeBase64, encodeBase64 } from "@freesignal/utils";
 import { Datagram, IdentityKeys, EncryptedData, UserId, XFreeSignal, DataEncoder } from "./types";
 
 type DatagramId = string;
@@ -29,7 +29,7 @@ type DatagramId = string;
 export class FreeSignalAPI {
     protected readonly signKey: Crypto.KeyPair;
     protected readonly boxKey: Crypto.KeyPair;
-    protected readonly sessions: LocalStorage<UserId, KeySession>;
+    protected readonly sessions: LocalStorage<UserId, ExportedKeySession>;
     protected readonly keyExchange: KeyExchange;
     protected readonly users: LocalStorage<UserId, IdentityKeys>;
 
@@ -38,7 +38,7 @@ export class FreeSignalAPI {
     public constructor(opts: {
         secretSignKey: Uint8Array,
         secretBoxKey: Uint8Array,
-        sessions: LocalStorage<UserId, KeySession>,
+        sessions: LocalStorage<UserId, ExportedKeySession>,
         keyExchange: LocalStorage<string, Crypto.KeyPair>,
         users: LocalStorage<UserId, IdentityKeys>
     }) {
@@ -59,19 +59,21 @@ export class FreeSignalAPI {
     }
 
     public async encryptData(data: Uint8Array, userId: string): Promise<EncryptedData> {
-        const session = await this.sessions.get(userId);
-        if (!session) throw new Error('Session not found for user: ' + userId);
+        const sessionJson = await this.sessions.get(userId);
+        if (!sessionJson) throw new Error('Session not found for user: ' + userId);
+        const session = KeySession.from(sessionJson);
         const encrypted = session.encrypt(data);
-        this.sessions.set(userId, session); // Ensure session is updated
+        this.sessions.set(userId, session.toJSON()); // Ensure session is updated
         return encrypted;
     }
 
     public async decryptData(data: Uint8Array, userId: string): Promise<Uint8Array> {
-        const session = await this.sessions.get(userId);
-        if (!session) throw new Error('Session not found for user: ' + userId);
+        const sessionJson = await this.sessions.get(userId);
+        if (!sessionJson) throw new Error('Session not found for user: ' + userId);
+        const session = KeySession.from(sessionJson);
         const decrypted = session.decrypt(data);
         if (!decrypted) throw new Error('Decryption failed for user: ' + userId);
-        this.sessions.set(userId, session); // Ensure session is updated
+        this.sessions.set(userId, session.toJSON()); // Ensure session is updated
         return decrypted;
     }
 

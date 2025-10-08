@@ -22,7 +22,7 @@ import { Crypto } from "@freesignal/interfaces";
 import { concatArrays, decodeBase64, encodeBase64, verifyArrays } from "@freesignal/utils";
 import { EncryptedData, EncryptedDataConstructor } from "./types";
 
-type ExportedKeySession = {
+export interface ExportedKeySession {
     secretKey: string;
     remoteKey: string;
     rootKey: string;
@@ -184,8 +184,7 @@ export class KeySession {
      * @param json string returned by `export()` method.
      * @returns session with the state parsed.
      */
-    public static parse(json: string): KeySession {
-        const data: ExportedKeySession = JSON.parse(json);
+    public static from(data: ExportedKeySession): KeySession {
         const session = new KeySession({ secretKey: encodeBase64(data.secretKey), rootKey: encodeBase64(data.rootKey) });
         session._remoteKey = encodeBase64(data.remoteKey);
         session.sendingChain = encodeBase64(data.sendingChain);

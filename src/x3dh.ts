@@ -23,6 +23,12 @@ import { KeySession } from "./double-ratchet";
 import { concatArrays, decodeBase64, encodeBase64, encodeUTF8, verifyArrays } from "@freesignal/utils";
 import { IdentityKeys } from "./types";
 
+export interface ExportedKeyExchange {
+    signatureKey: Crypto.KeyPair;
+    identityKey: Crypto.KeyPair;
+    bundleStore: Array<[string, Crypto.KeyPair]>;
+}
+
 export class KeyExchange {
     public static readonly version = 1;
     private static readonly hkdfInfo = encodeUTF8("freesignal/x3dh/" + KeyExchange.version);
@@ -146,18 +152,30 @@ export class KeyExchange {
             }
         };
     }
+
+    public toJSON(): ExportedKeyExchange {
+        return {
+            identityKey: this._identityKey,
+            signatureKey: this._signatureKey,
+            bundleStore: Array.from(this.bundleStore.entries())
+        }
+    }
+
+    public static from(data: ExportedKeyExchange) {
+        return new KeyExchange(data.signatureKey.secretKey, data.identityKey.secretKey, new AsyncMap(data.bundleStore));
+    }
 }
 
 class AsyncMap<K, V> implements LocalStorage<K, V> {
     private map: Map<K, V>;
 
-    constructor() {
-        this.map = new Map<K, V>();
+    constructor(iterable?: Iterable<readonly [K, V]>) {
+        this.map = new Map<K, V>(iterable);
     }
 
-    async set(key: K, value: V): Promise<this> {
+    async set(key: K, value: V): Promise<void> {
         this.map.set(key, value);
-        return this;
+        return;
     }
 
     async get(key: K): Promise<V | undefined> {
@@ -172,7 +190,7 @@ class AsyncMap<K, V> implements LocalStorage<K, V> {
         return this.map.delete(key);
     }
 
-    async entries(): Promise<MapIterator<[K, V]>> {
+    entries(): MapIterator<[K, V]> {
         return this.map.entries();
     }
 }
