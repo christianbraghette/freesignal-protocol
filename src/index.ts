@@ -38,13 +38,11 @@ export function createKeySession(opts?: { secretKey?: Uint8Array, remoteKey?: Ui
 /**
  * Creates a new X3DH (Extended Triple Diffie-Hellman) key exchange session.
  *
- * @param signSecretKey - The EdDSA signing secret key as a Uint8Array.
- * @param boxSecretKey - The ECDH box secret key as a Uint8Array.
- * @param bundleStore - Optional local storage for key bundles.
+ * @param storage - Local storage for keys.
  * @returns A new instance of {@link KeyExchange}.
  */
-export function createKeyExchange(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, crypto.KeyPair>): KeyExchange {
-    return new KeyExchange(signSecretKey, boxSecretKey, bundleStore);
+export function createKeyExchange(storage: LocalStorage<string, crypto.KeyPair>): KeyExchange {
+    return new KeyExchange(storage);
 }
 
 /**
@@ -58,4 +56,4 @@ export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Ui
     return { sign: crypto.EdDSA.keyPair(signSecretKey), box: crypto.ECDH.keyPair(boxSecretKey) };
 }
 
-export { UserId, IdentityKeys, Protocols, Datagram, EncryptedData } from "./types";
+export * from "./types";

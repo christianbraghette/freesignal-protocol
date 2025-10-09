@@ -46,7 +46,7 @@ export class FreeSignalAPI {
         this.signKey = crypto.EdDSA.keyPair(secretSignKey);
         this.boxKey = crypto.ECDH.keyPair(secretBoxKey);
         this.sessions = storage.sessions;
-        this.keyExchange = new KeyExchange(secretSignKey, secretBoxKey, storage.keyExchange);
+        this.keyExchange = new KeyExchange(storage.keyExchange);
         this.users = storage.users;
         this.userId = UserId.getUserId(this.signKey.publicKey).toString();
     }

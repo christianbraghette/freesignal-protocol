@@ -24,24 +24,39 @@ import { concatArrays, decodeBase64, encodeBase64, encodeUTF8, verifyArrays } fr
 import { IdentityKeys } from "./types";
 
 export interface ExportedKeyExchange {
-    signatureKey: Crypto.KeyPair;
-    identityKey: Crypto.KeyPair;
-    bundleStore: Array<[string, Crypto.KeyPair]>;
+    storage: Array<[string, Crypto.KeyPair]>;
 }
 
 export class KeyExchange {
     public static readonly version = 1;
     private static readonly hkdfInfo = encodeUTF8("freesignal/x3dh/" + KeyExchange.version);
     private static readonly maxOPK = 10;
+    private static readonly signatureKeySymbol = decodeBase64(crypto.hash(encodeUTF8("signatureKeySymbol")));
+    private static readonly identityKeySymbol = decodeBase64(crypto.hash(encodeUTF8("identityKeySymbol")));
 
-    private readonly _signatureKey: Crypto.KeyPair;
-    private readonly _identityKey: Crypto.KeyPair;
-    private readonly bundleStore: LocalStorage<string, Crypto.KeyPair>;
+    private _identityKey!: Crypto.KeyPair;
+    private _signatureKey!: Crypto.KeyPair;
+    private readonly storage: LocalStorage<string, Crypto.KeyPair>;
 
-    public constructor(signSecretKey: Uint8Array, boxSecretKey: Uint8Array, bundleStore?: LocalStorage<string, Crypto.KeyPair>) {
-        this._signatureKey = crypto.EdDSA.keyPair(signSecretKey);
-        this._identityKey = crypto.ECDH.keyPair(boxSecretKey);
-        this.bundleStore = bundleStore ?? new AsyncMap<string, Crypto.KeyPair>();
+    public constructor(storage: LocalStorage<string, Crypto.KeyPair>, secretSignKey?: Uint8Array, secretIdentityKey?: Uint8Array) {
+        this.storage = storage;
+        if (secretSignKey)
+            this.storage.set(KeyExchange.signatureKeySymbol, crypto.EdDSA.keyPair(secretSignKey))
+        else
+            this.storage.get(KeyExchange.signatureKeySymbol).then((value) => {
+                this._signatureKey = value ?? crypto.EdDSA.keyPair();
+                if (!value)
+                    this.storage.set(KeyExchange.signatureKeySymbol, this._signatureKey);
+            });
+
+        if (secretIdentityKey)
+            this.storage.set(KeyExchange.signatureKeySymbol, crypto.EdDSA.keyPair(secretIdentityKey))
+        else
+            this.storage.get(KeyExchange.identityKeySymbol).then((value) => {
+                this._identityKey = value ?? crypto.ECDH.keyPair();
+                if (!value)
+                    this.storage.set(KeyExchange.identityKeySymbol, this._identityKey);
+            });
     }
 
     public get signatureKey() { return this._signatureKey.publicKey; }
@@ -51,14 +66,14 @@ export class KeyExchange {
     private generateSPK(): { signedPreKey: Crypto.KeyPair, signedPreKeyHash: Uint8Array } {
         const signedPreKey = crypto.ECDH.keyPair();
         const signedPreKeyHash = crypto.hash(signedPreKey.publicKey);
-        this.bundleStore.set(decodeBase64(signedPreKeyHash), signedPreKey);
+        this.storage.set(decodeBase64(signedPreKeyHash), signedPreKey);
         return { signedPreKey, signedPreKeyHash };
     }
 
     private generateOPK(spkHash: Uint8Array): { onetimePreKey: Crypto.KeyPair, onetimePreKeyHash: Uint8Array } {
         const onetimePreKey = crypto.ECDH.keyPair();
         const onetimePreKeyHash = crypto.hash(onetimePreKey.publicKey);
-        this.bundleStore.set(decodeBase64(spkHash).concat(decodeBase64(onetimePreKeyHash)), onetimePreKey);
+        this.storage.set(decodeBase64(spkHash).concat(decodeBase64(onetimePreKeyHash)), onetimePreKey);
         return { onetimePreKey, onetimePreKeyHash };
     }
 
@@ -126,11 +141,11 @@ export class KeyExchange {
     }
 
     public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, identityKeys: IdentityKeys }> {
-        const signedPreKey = await this.bundleStore.get(message.signedPreKeyHash);
+        const signedPreKey = await this.storage.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
-        const onetimePreKey = await this.bundleStore.get(hash);
+        const onetimePreKey = await this.storage.get(hash);
         if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey) throw new Error("ACK message malformed");
-        if (!this.bundleStore.delete(hash)) throw new Error("Bundle store deleting error");
+        if (!this.storage.delete(hash)) throw new Error("Bundle store deleting error");
         const identityKey = encodeBase64(message.identityKey);
         const ephemeralKey = encodeBase64(message.ephemeralKey);
         const rootKey = crypto.hkdf(new Uint8Array([
@@ -155,42 +170,12 @@ export class KeyExchange {
 
     public toJSON(): ExportedKeyExchange {
         return {
-            identityKey: this._identityKey,
-            signatureKey: this._signatureKey,
-            bundleStore: Array.from(this.bundleStore.entries())
+            storage: Array.from(this.storage.entries())
         }
     }
 
-    public static from(data: ExportedKeyExchange) {
-        return new KeyExchange(data.signatureKey.secretKey, data.identityKey.secretKey, new AsyncMap(data.bundleStore));
-    }
-}
-
-class AsyncMap<K, V> implements LocalStorage<K, V> {
-    private map: Map<K, V>;
-
-    constructor(iterable?: Iterable<readonly [K, V]>) {
-        this.map = new Map<K, V>(iterable);
-    }
-
-    async set(key: K, value: V): Promise<void> {
-        this.map.set(key, value);
-        return;
-    }
-
-    async get(key: K): Promise<V | undefined> {
-        return this.map.get(key);
-    }
-
-    async has(key: K): Promise<boolean> {
-        return this.map.has(key);
-    }
-
-    async delete(key: K): Promise<boolean> {
-        return this.map.delete(key);
-    }
-
-    entries(): MapIterator<[K, V]> {
-        return this.map.entries();
+    public static from(data: ExportedKeyExchange, storage: LocalStorage<string, Crypto.KeyPair>) {
+        Promise.all(data.storage.map(([key, value]) => storage.set(key, value)));
+        return new KeyExchange(storage);
     }
 }
