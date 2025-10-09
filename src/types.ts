@@ -20,7 +20,7 @@
 import { concatArrays, decodeBase64, decodeJSON, decodeUTF8, encodeBase64, encodeJSON, encodeUTF8, numberFromArray, numberToArray } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import { Encodable } from "@freesignal/interfaces";
-import { KeySession } from "./double-ratchet";
+import { EncryptedDataConstructor } from "./double-ratchet";
 import fflate from 'fflate';
 
 export type UserId = string;
@@ -327,104 +327,6 @@ export class EncryptedData {
     public static from(array: Uint8Array | EncryptedData) {
         return new EncryptedDataConstructor(array) as EncryptedData;
     }
-}
-
-export class EncryptedDataConstructor implements EncryptedData {
-    public static readonly secretKeyLength = crypto.ECDH.secretKeyLength;
-    public static readonly publicKeyLength = crypto.ECDH.publicKeyLength;
-    public static readonly keyLength = crypto.box.keyLength;
-    public static readonly nonceLength = crypto.box.nonceLength;
-    public static readonly maxCount = 65536 //32768;
-    public static readonly countLength = 2;
-
-    private raw: Uint8Array;
-
-    constructor(count: number | Uint8Array, previous: number | Uint8Array, publicKey: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array, version?: number | Uint8Array)
-    constructor(encrypted: Uint8Array | EncryptedData)
-    constructor(...arrays: Uint8Array[]) {
-        arrays = arrays.filter(value => value !== undefined);
-        if (arrays[0] instanceof EncryptedDataConstructor) {
-            this.raw = arrays[0].raw;
-            return this;
-        }
-        if (typeof arrays[0] === 'number')
-            arrays[0] = numberToArray(arrays[0], EncryptedDataConstructor.countLength);
-        if (typeof arrays[1] === 'number')
-            arrays[1] = numberToArray(arrays[1], EncryptedDataConstructor.countLength);
-        if (arrays.length === 6) {
-            arrays.unshift(typeof arrays[5] === 'number' ? numberToArray(arrays[5]) : arrays[5]);
-            arrays.pop();
-        } else if (arrays.length > 1) {
-            arrays.unshift(numberToArray(KeySession.version));
-        }
-        this.raw = concatArrays(...arrays);
-    }
-
-    public get length() { return this.raw.length; }
-
-    public get version() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.version.get)); }
-
-    public get count() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.count.get)); }
-
-    public get previous() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.previous.get)); }
-
-    public get publicKey() { return new Uint8Array(this.raw.buffer, ...Offsets.publicKey.get); }
-
-    public get nonce() { return new Uint8Array(this.raw.buffer, ...Offsets.nonce.get); }
-
-    public get ciphertext() { return new Uint8Array(this.raw.buffer, Offsets.ciphertext.start); }
-
-    public encode(): Uint8Array {
-        return this.raw;
-    }
-
-    public toString(): string {
-        return decodeBase64(this.raw);
-    }
-
-    public toJSON() {
-        return {
-            version: this.version,
-            count: this.count,
-            previous: this.previous,
-            publicKey: decodeBase64(this.publicKey),
-            nonce: decodeBase64(this.nonce),
-            ciphertext: decodeBase64(this.ciphertext)
-        };
-    }
-}
-
-class Offsets {
-
-    private static set(start: number, length?: number) {
-        class Offset {
-            readonly start: number;
-            readonly end?: number;
-            readonly length?: number;
-
-            constructor(start: number, length?: number) {
-                this.start = start;
-                this.length = length;
-
-                if (typeof length === 'number')
-                    this.end = start + length;
-            }
-
-            get get() {
-                return [this.start, this.length];
-            }
-        }
-        return new Offset(start, length);
-    }
-
-    static readonly checksum = Offsets.set(0, 0);
-    static readonly version = Offsets.set(Offsets.checksum.end!, 1);
-    static readonly count = Offsets.set(Offsets.version.end!, EncryptedDataConstructor.countLength);
-    static readonly previous = Offsets.set(Offsets.count.end!, EncryptedDataConstructor.countLength);
-    static readonly publicKey = Offsets.set(Offsets.previous.end!, EncryptedDataConstructor.publicKeyLength);
-    static readonly nonce = Offsets.set(Offsets.publicKey.end!, EncryptedDataConstructor.nonceLength);
-    static readonly ciphertext = Offsets.set(Offsets.nonce.end!, undefined);
-
 }
 
 enum DataType {
