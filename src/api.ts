@@ -22,7 +22,7 @@ import crypto from "@freesignal/crypto";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 import { decodeBase64, encodeBase64 } from "@freesignal/utils";
-import { Datagram, IdentityKeys, EncryptedData, UserId, XFreeSignal, DataEncoder } from "./types";
+import { Datagram, IdentityKey, EncryptedData, UserId, XFreeSignal, DataEncoder } from "./types";
 
 type DatagramId = string;
 
@@ -31,7 +31,7 @@ export class FreeSignalAPI {
     protected readonly boxKey: Crypto.KeyPair;
     protected readonly sessions: LocalStorage<UserId, ExportedKeySession>;
     protected readonly keyExchange: KeyExchange;
-    protected readonly users: LocalStorage<UserId, IdentityKeys>;
+    protected readonly users: LocalStorage<UserId, IdentityKey>;
 
     public readonly userId: UserId;
 
@@ -41,27 +41,24 @@ export class FreeSignalAPI {
         storage: Database<{
             sessions: LocalStorage<UserId, ExportedKeySession>,
             keyExchange: LocalStorage<string, Crypto.KeyPair>,
-            users: LocalStorage<UserId, IdentityKeys>
+            users: LocalStorage<UserId, IdentityKey>
         }>) {
         this.signKey = crypto.EdDSA.keyPair(secretSignKey);
         this.boxKey = crypto.ECDH.keyPair(secretBoxKey);
         this.sessions = storage.sessions;
-        this.keyExchange = new KeyExchange(storage.keyExchange);
+        this.keyExchange = new KeyExchange({ keys: storage.keyExchange, sessions: storage.sessions });
         this.users = storage.users;
         this.userId = UserId.getUserId(this.signKey.publicKey).toString();
     }
 
-    public get identityKeys(): IdentityKeys {
-        return {
-            publicKey: decodeBase64(this.signKey.publicKey),
-            identityKey: decodeBase64(this.boxKey.publicKey)
-        }
+    public get identityKeys(): IdentityKey {
+        return IdentityKey.from(this.signKey.publicKey, this.boxKey.publicKey);
     }
 
     public async encryptData(data: Uint8Array, userId: string): Promise<EncryptedData> {
         const sessionJson = await this.sessions.get(userId);
         if (!sessionJson) throw new Error('Session not found for user: ' + userId);
-        const session = KeySession.from(sessionJson);
+        const session = KeySession.from(sessionJson, this.sessions);
         const encrypted = session.encrypt(data);
         this.sessions.set(userId, session.toJSON()); // Ensure session is updated
         return encrypted;
@@ -70,7 +67,7 @@ export class FreeSignalAPI {
     public async decryptData(data: Uint8Array, userId: string): Promise<Uint8Array> {
         const sessionJson = await this.sessions.get(userId);
         if (!sessionJson) throw new Error('Session not found for user: ' + userId);
-        const session = KeySession.from(sessionJson);
+        const session = KeySession.from(sessionJson, this.sessions);
         const decrypted = session.decrypt(data);
         if (!decrypted) throw new Error('Decryption failed for user: ' + userId);
         this.sessions.set(userId, session.toJSON()); // Ensure session is updated
@@ -172,13 +169,13 @@ export class FreeSignalAPI {
         return `Bearer ${this.userId}:${decodeBase64(signature)}`;
     };
 
-    protected async digestToken(auth?: string): Promise<{ identityKeys: IdentityKeys, userId: UserId }> {
+    protected async digestToken(auth?: string): Promise<{ identityKeys: IdentityKey, userId: UserId }> {
         if (auth && auth.startsWith("Bearer ")) {
             const [userId, signature] = auth.substring(7).split(":");
             const identityKeys = await this.users.get(userId);
             if (!identityKeys)
                 throw new Error('User not found or invalid auth token');
-            if (crypto.EdDSA.verify(crypto.hash(crypto.ECDH.scalarMult(encodeBase64(identityKeys.identityKey), this.boxKey.secretKey)), encodeBase64(signature), encodeBase64(identityKeys.publicKey)))
+            if (crypto.EdDSA.verify(crypto.hash(crypto.ECDH.scalarMult(identityKeys.exchangeKey, this.boxKey.secretKey)), encodeBase64(signature), identityKeys.signatureKey))
                 return { identityKeys, userId: auth };
             else
                 throw new Error('Authorization token not valid');

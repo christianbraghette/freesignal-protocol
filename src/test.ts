@@ -1,32 +1,29 @@
-import { createKeyExchange, Datagram, Protocols } from ".";
+import { AsyncMap, createKeyExchange, Datagram, IdentityKey, Protocols } from ".";
 import crypto from "@freesignal/crypto";
 import { decodeUTF8, encodeUTF8 } from "@freesignal/utils";
 
-const bob = createKeyExchange(crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
-const alice = createKeyExchange(crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
+const bob = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
+const alice = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
 
-const bobmessage = bob.generateData();
+bob.generateData().then(async bobmessage => {
+    const { session: alicesession, message: aliceack } = await alice.digestData(bobmessage);
+    const { session: bobsession, identityKey } = await bob.digestMessage(aliceack);
 
-const { session: alicesession, message: aliceack } = alice.digestData(bobmessage);
-
-bob.digestMessage(aliceack).then(({ session: bobsession, identityKeys }) => {
-    if (bobsession && identityKeys) {
+    if (bobsession && identityKey) {
         console.log("Session established successfully between Alice and Bob.");
 
-        const datagram = Datagram.create(bob.signatureKey, alice.signatureKey, Protocols.MESSAGE, bobsession.encrypt(encodeUTF8("Hi Alice!"))?.encode());
-
-        //console.log(datagram.payload);
+        const datagram = Datagram.create((await bob.getIdentityKey()).signatureKey, (await alice.getIdentityKey()).signatureKey, Protocols.MESSAGE, bobsession.encrypt(encodeUTF8("Hi Alice!"))?.encode());
 
         const msg = datagram.encode();
 
-        console.log(decodeUTF8(alicesession.decrypt(Datagram.from(msg!).payload!)));
+        console.log(decodeUTF8(alicesession.decrypt(Datagram.from(msg!).payload!) ?? new Uint8Array()));
 
         if (alicesession.handshaked && bobsession.handshaked)
             console.log("Successfully handshaked");
         else
             console.log("Error during handshake")
 
-        const longmsg = Datagram.create(alice.signatureKey, bob.signatureKey, Protocols.MESSAGE, alicesession.encrypt(
+        const longmsg = Datagram.create((await bob.getIdentityKey()).signatureKey, (await alice.getIdentityKey()).signatureKey, Protocols.MESSAGE, alicesession.encrypt(
             new Uint8Array(1000000).fill(33).map(
                 val => val + Math.floor(Math.random() * 93)
             )

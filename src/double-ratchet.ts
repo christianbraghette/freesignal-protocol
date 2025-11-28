@@ -18,7 +18,7 @@
  */
 
 import crypto from "@freesignal/crypto";
-import { Crypto } from "@freesignal/interfaces";
+import { Crypto, LocalStorage } from "@freesignal/interfaces";
 import { concatArrays, decodeBase64, encodeBase64, numberFromArray, numberToArray, verifyArrays } from "@freesignal/utils";
 import { EncryptedData } from "./types";
 
@@ -43,6 +43,8 @@ export class KeySession {
     public static readonly version = 1;
     public static readonly rootKeyLength = crypto.box.keyLength;
 
+    public readonly id: string;
+
     private keyPair: Crypto.KeyPair;
     private _remoteKey?: Uint8Array;
     private rootKey?: Uint8Array;
@@ -53,7 +55,8 @@ export class KeySession {
     private receivingCount = 0;
     private previousKeys = new KeyMap<number, Uint8Array>();
 
-    public constructor(opts: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array } = {}) {
+    public constructor(storage: LocalStorage<string, ExportedKeySession>, opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array } = {}) {
+        this.id = opts.id ?? crypto.UUID.generate().toString();
         this.keyPair = crypto.ECDH.keyPair(opts.secretKey);
         if (opts.rootKey)
             this.rootKey = opts.rootKey;
@@ -61,6 +64,7 @@ export class KeySession {
             this._remoteKey = opts.remoteKey;
             this.sendingChain = this.ratchetKeys();
         }
+        storage.set(this.id, this.toJSON());
     }
 
     /**
@@ -140,12 +144,10 @@ export class KeySession {
     public decrypt(payload: Uint8Array | EncryptedData): Uint8Array | undefined {
         const encrypted = EncryptedData.from(payload);
         const publicKey = encrypted.publicKey;
-        if (!this._remoteKey) throw new Error("Missing remoteKey");
-        if (!verifyArrays(publicKey, this._remoteKey)) {
+        if (this._remoteKey && !verifyArrays(publicKey, this._remoteKey))
             while (this.receivingCount < encrypted.previous)
                 this.previousKeys.set(this.receivingCount, this.getReceivingKey());
-            this.setRemoteKey(publicKey);
-        }
+        this.setRemoteKey(publicKey);
         let key: Uint8Array | undefined;
         const count = encrypted.count;
         if (this.receivingCount < count) {
@@ -167,10 +169,10 @@ export class KeySession {
     public toJSON(): ExportedKeySession {
         return {
             secretKey: decodeBase64(concatArrays(this.keyPair.secretKey)),
-            remoteKey: decodeBase64(this._remoteKey),
-            rootKey: decodeBase64(this.rootKey),
-            sendingChain: decodeBase64(this.sendingChain),
-            receivingChain: decodeBase64(this.receivingChain),
+            remoteKey: decodeBase64(this._remoteKey ?? new Uint8Array()),
+            rootKey: decodeBase64(this.rootKey ?? new Uint8Array()),
+            sendingChain: decodeBase64(this.sendingChain ?? new Uint8Array()),
+            receivingChain: decodeBase64(this.receivingChain ?? new Uint8Array()),
             sendingCount: this.sendingCount,
             receivingCount: this.receivingCount,
             previousCount: this.previousCount,
@@ -184,8 +186,8 @@ export class KeySession {
      * @param json string returned by `export()` method.
      * @returns session with the state parsed.
      */
-    public static from(data: ExportedKeySession): KeySession {
-        const session = new KeySession({ secretKey: encodeBase64(data.secretKey), rootKey: encodeBase64(data.rootKey) });
+    public static from(data: ExportedKeySession, storage: LocalStorage<string, ExportedKeySession>): KeySession {
+        const session = new KeySession(storage, { secretKey: encodeBase64(data.secretKey), rootKey: encodeBase64(data.rootKey) });
         session._remoteKey = encodeBase64(data.remoteKey);
         session.sendingChain = encodeBase64(data.sendingChain);
         session.receivingChain = encodeBase64(data.receivingChain);

@@ -19,7 +19,7 @@
 
 import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto } from "@freesignal/interfaces";
-import { KeySession } from "./double-ratchet";
+import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 
 /**
@@ -31,8 +31,8 @@ import { KeyExchange } from "./x3dh";
  * @param opts.rootKey - An optional root key to initialize the session.
  * @returns A new instance of {@link KeySession}.
  */
-export function createKeySession(opts?: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array }): KeySession {
-    return new KeySession(opts);
+export function createKeySession(storage: LocalStorage<string, ExportedKeySession>, opts?: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array }): KeySession {
+    return new KeySession(storage, opts);
 }
 
 /**
@@ -41,18 +41,18 @@ export function createKeySession(opts?: { secretKey?: Uint8Array, remoteKey?: Ui
  * @param storage - Local storage for keys.
  * @returns A new instance of {@link KeyExchange}.
  */
-export function createKeyExchange(storage: LocalStorage<string, crypto.KeyPair>): KeyExchange {
-    return new KeyExchange(storage);
+export function createKeyExchange(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, secretSignKey?: Uint8Array, secretIdentityKey?: Uint8Array): KeyExchange {
+    return new KeyExchange(storage, secretSignKey, secretIdentityKey);
 }
 
 /**
- * Generates identity key pairs for signing and encryption.
+ * Generates key pairs for signing and encryption.
  *
  * @param signSecretKey - Optional secret key for EdDSA signing.
  * @param boxSecretKey - Optional secret key for ECDH encryption.
  * @returns An object containing readonly signing and box key pairs.
  */
-export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { readonly sign: Crypto.KeyPair, readonly box: Crypto.KeyPair } {
+export function createKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { readonly sign: Crypto.KeyPair, readonly box: Crypto.KeyPair } {
     return { sign: crypto.EdDSA.keyPair(signSecretKey), box: crypto.ECDH.keyPair(boxSecretKey) };
 }
 

@@ -19,9 +19,10 @@
 
 import { concatArrays, decodeBase64, decodeJSON, decodeUTF8, encodeBase64, encodeJSON, encodeUTF8, numberFromArray, numberToArray } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
-import { Encodable } from "@freesignal/interfaces";
+import { LocalStorage, IdentityKey as IdentityKeyInterface, Encodable } from "@freesignal/interfaces";
 import { EncryptedDataConstructor } from "./double-ratchet";
 import fflate from 'fflate';
+
 
 export type UserId = string;
 export namespace UserId {
@@ -51,48 +52,68 @@ export namespace UserId {
     }
 }
 
-export interface IdentityKeys {
-    readonly publicKey: string;
-    readonly identityKey: string;
-}
-export namespace IdentityKeys {
-    export const keyLength = crypto.ECDH.publicKeyLength;
+export { IdentityKey } from "@freesignal/interfaces";
+export namespace IdentityKey {
+    export const keyLength = crypto.EdDSA.publicKeyLength + crypto.ECDH.publicKeyLength;
 
-    class IdentityKeysConstructor implements IdentityKeys, Encodable {
-        public readonly publicKey: string;
-        public readonly identityKey: string;
+    type IdentityKey = IdentityKeyInterface;
 
-        constructor(identityKeys: IdentityKeys | Uint8Array | string) {
-            if (typeof identityKeys === 'string')
-                identityKeys = encodeBase64(identityKeys);
-            if (identityKeys instanceof Uint8Array) {
-                this.publicKey = decodeBase64(identityKeys.subarray(0, IdentityKeys.keyLength));
-                this.identityKey = decodeBase64(identityKeys.subarray(IdentityKeys.keyLength));
-            } else {
-                this.publicKey = identityKeys.publicKey;
-                this.identityKey = identityKeys.identityKey;
-            }
+    class IdentityKeyConstructor implements IdentityKey, Encodable {
+        private readonly raw: Uint8Array;
+
+        /**
+         * Uint8Array: [
+         * publicKey,
+         * indentityKey,
+         * ]
+         */
+        constructor(identityKey: IdentityKey | Uint8Array | string) {
+            if (typeof identityKey === 'string')
+                identityKey = encodeBase64(identityKey);
+            else if (identityKey instanceof IdentityKeyConstructor)
+                identityKey = identityKey.raw;
+            if (!isIdentityKeys(identityKey))
+                throw new Error("Invalid key length");
+            this.raw = new Uint8Array(identityKey as Uint8Array);
         }
 
         encode(): Uint8Array {
-            return concatArrays(encodeBase64(this.publicKey), encodeBase64(this.identityKey));
+            return new Uint8Array(this.raw);
         }
 
         toString(): string {
-            throw decodeBase64(this.encode());
+            return decodeBase64(new Uint8Array(this.raw));
         }
 
         toJSON(): string {
-            throw this.toString();
+            return this.toString();
+        }
+
+        get signatureKey(): Uint8Array {
+            return this.raw.subarray(0, crypto.EdDSA.publicKeyLength);
+        }
+
+        get exchangeKey(): Uint8Array {
+            return this.raw.subarray(crypto.ECDH.publicKeyLength, keyLength);
         }
     }
 
     export function isIdentityKeys(obj: any): boolean {
-        return (typeof obj === 'object' && obj.publicKey && obj.identityKey);
+        return (obj instanceof Uint8Array && obj.length === keyLength);
     }
 
-    export function from(identityKeys: IdentityKeys): IdentityKeysConstructor {
-        return new IdentityKeysConstructor(identityKeys);
+    export function from(identityKey: IdentityKey | Uint8Array | string): IdentityKey
+    export function from(signatureKey: IdentityKey | Uint8Array | string, exchangeKey: IdentityKey | Uint8Array | string): IdentityKey
+    export function from(...keys: (IdentityKey | Uint8Array | string)[]): IdentityKey {
+        keys = keys.map(key => {
+            if (key instanceof IdentityKeyConstructor)
+                return key.encode();
+            else if (typeof key === 'string')
+                return encodeBase64(key);
+            else
+                return key as Uint8Array;
+        });
+        return new IdentityKeyConstructor(keys.length === 2 ? concatArrays(...keys as Uint8Array[]) : keys[0]);
     }
 }
 
@@ -174,13 +195,13 @@ export namespace Datagram {
                     this.protocol = datagram.protocol;
                     this.createdAt = datagram.createdAt;
                     this._payload = datagram.payload;
-                    this._signature = encodeBase64(datagram.signature);
+                    this._signature = datagram.signature ? encodeBase64(datagram.signature) : undefined;
                 } else throw new Error('Invalid constructor arguments for Datagram');
             } else if (typeof data === 'string' || data instanceof Uint8Array) {
                 this.id = crypto.UUID.generate().toString();
                 this.version = Datagram.version;
                 this.sender = typeof data === 'string' ? data : decodeBase64(data);
-                this.receiver = typeof receiver === 'string' ? receiver : decodeBase64(receiver);
+                this.receiver = typeof receiver === 'string' ? receiver : decodeBase64(receiver!);
                 this.protocol = protocol!;
                 this.createdAt = Date.now();
                 this._payload = payload instanceof Uint8Array ? payload : payload?.encode();
@@ -188,14 +209,14 @@ export namespace Datagram {
         }
 
         public get signed(): boolean {
-            return !this._signature && !this.secretKey ? false : true;
+            return !!this._signature || !!this.secretKey;
         }
 
         public get signature(): string | undefined {
             if (this.signed) {
                 if (!this._signature)
                     this.encode();
-                return decodeBase64(this._signature);
+                return decodeBase64(this._signature!);
             }
         }
 
@@ -292,7 +313,6 @@ export interface EncryptedData extends Encodable {
      * The encrypted message content.
      */
     readonly ciphertext: Uint8Array;
-
 
     /**
      * Serializes the payload into a Uint8Array for transport.
@@ -501,4 +521,37 @@ export namespace XFreeSignal {
         }
     }
 
+}
+
+export class AsyncMap<K, V> implements LocalStorage<K, V> {
+    private readonly map: Map<K, V>;
+
+    constructor(iterable?: Iterable<readonly [K, V]>) {
+        this.map = new Map<K, V>(iterable);
+    }
+
+    async set(key: K, value: V): Promise<void> {
+        this.map.set(key, value);
+        return;
+    }
+
+    async get(key: K): Promise<V | undefined> {
+        return this.map.get(key);
+    }
+
+    async has(key: K): Promise<boolean> {
+        return this.map.has(key);
+    }
+
+    async delete(key: K): Promise<boolean> {
+        return this.map.delete(key);
+    }
+
+    async clear(): Promise<void> {
+        return this.map.clear();
+    }
+
+    entries() {
+        return Array.from(this.map.entries()).values();
+    }
 }
