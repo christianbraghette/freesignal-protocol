@@ -21,6 +21,7 @@ import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
+import { IdentityKey } from "./types";
 
 /**
  * Creates a new Double Ratchet session for secure message exchange.
@@ -52,8 +53,10 @@ export function createKeyExchange(storage: { keys: LocalStorage<string, Crypto.K
  * @param boxSecretKey - Optional secret key for ECDH encryption.
  * @returns An object containing readonly signing and box key pairs.
  */
-export function createKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { readonly sign: Crypto.KeyPair, readonly box: Crypto.KeyPair } {
-    return { sign: crypto.EdDSA.keyPair(signSecretKey), box: crypto.ECDH.keyPair(boxSecretKey) };
+export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { readonly identityKey: IdentityKey, readonly signatureKeyPair: Crypto.KeyPair, readonly exchangeKeyPair: Crypto.KeyPair } {
+    const signatureKeyPair = crypto.EdDSA.keyPair(signSecretKey);
+    const exchangeKeyPair = crypto.ECDH.keyPair(boxSecretKey);
+    return { signatureKeyPair, exchangeKeyPair, identityKey: IdentityKey.from(signatureKeyPair.publicKey, exchangeKeyPair.publicKey) };
 }
 
 export * from "./types";

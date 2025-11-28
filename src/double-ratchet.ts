@@ -55,6 +55,8 @@ export class KeySession {
     private receivingCount = 0;
     private previousKeys = new KeyMap<number, Uint8Array>();
 
+    private readonly storage: LocalStorage<string, ExportedKeySession>;
+
     public constructor(storage: LocalStorage<string, ExportedKeySession>, opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array } = {}) {
         this.id = opts.id ?? crypto.UUID.generate().toString();
         this.keyPair = crypto.ECDH.keyPair(opts.secretKey);
@@ -64,7 +66,8 @@ export class KeySession {
             this._remoteKey = opts.remoteKey;
             this.sendingChain = this.ratchetKeys();
         }
-        storage.set(this.id, this.toJSON());
+        this.storage = storage;
+        this.storage.set(this.id, this.toJSON());
     }
 
     /**
@@ -121,17 +124,23 @@ export class KeySession {
         return sharedKey;
     }
 
+    private save(): Promise<void> {
+        return this.storage.set(this.id, this.toJSON());
+    }
+
     /**
      * Encrypts a message payload using the current sending chain.
      *
      * @param message - The message as a Uint8Array.
      * @returns An EncryptedPayload or undefined if encryption fails.
      */
-    public encrypt(message: Uint8Array): EncryptedData {
+    public async encrypt(message: Uint8Array): Promise<EncryptedData> {
         const key = this.getSendingKey();
-        if (this.sendingCount >= EncryptedDataConstructor.maxCount || this.previousCount >= EncryptedDataConstructor.maxCount) throw new Error();
+        if (this.sendingCount >= EncryptedDataConstructor.maxCount || this.previousCount >= EncryptedDataConstructor.maxCount)
+            throw new Error();
         const nonce = crypto.randomBytes(EncryptedDataConstructor.nonceLength);
         const ciphertext = crypto.box.encrypt(message, nonce, key);
+        await this.save();
         return new EncryptedDataConstructor(this.sendingCount, this.previousCount, this.keyPair.publicKey, nonce, ciphertext);
     }
 
@@ -141,7 +150,7 @@ export class KeySession {
      * @param payload - The received encrypted message.
      * @returns The decrypted message as a Uint8Array, or undefined if decryption fails.
      */
-    public decrypt(payload: Uint8Array | EncryptedData): Uint8Array | undefined {
+    public async decrypt(payload: Uint8Array | EncryptedData): Promise<Uint8Array | undefined> {
         const encrypted = EncryptedData.from(payload);
         const publicKey = encrypted.publicKey;
         if (this._remoteKey && !verifyArrays(publicKey, this._remoteKey))
@@ -159,8 +168,11 @@ export class KeySession {
         } else {
             key = this.previousKeys.get(count);
         }
-        if (!key) return undefined;
-        return crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key) ?? undefined;
+        if (!key)
+            return undefined;
+
+        await this.save();
+        return crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key);
     }
 
     /**
@@ -195,6 +207,7 @@ export class KeySession {
         session.receivingCount = data.receivingCount;
         session.previousCount = data.previousCount;
         session.previousKeys = new KeyMap(data.previousKeys);
+        session.save();
         return session;
     }
 

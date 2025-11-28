@@ -68,7 +68,7 @@ export class FreeSignalAPI {
         const sessionJson = await this.sessions.get(userId);
         if (!sessionJson) throw new Error('Session not found for user: ' + userId);
         const session = KeySession.from(sessionJson, this.sessions);
-        const decrypted = session.decrypt(data);
+        const decrypted = await session.decrypt(data);
         if (!decrypted) throw new Error('Decryption failed for user: ' + userId);
         this.sessions.set(userId, session.toJSON()); // Ensure session is updated
         return decrypted;

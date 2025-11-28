@@ -127,7 +127,7 @@ export class KeyExchange {
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession(this.sessions, { remoteKey: identityKey.exchangeKey, rootKey });
-        const cyphertext = session.encrypt(concatArrays(crypto.hash((await this.getSignatureKey()).publicKey), crypto.hash(identityKey.exchangeKey)));
+        const cyphertext = await session.encrypt(concatArrays(crypto.hash((await this.getIdentityKey()).encode()), crypto.hash(identityKey.encode())));
         if (!cyphertext) throw new Error("Decryption error");
 
         return {
@@ -160,9 +160,9 @@ export class KeyExchange {
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession(this.sessions, { secretKey: _exchangeKey.secretKey, rootKey })
-        const cleartext = session.decrypt(encodeBase64(message.associatedData));
+        const cleartext = await session.decrypt(encodeBase64(message.associatedData));
         if (!cleartext) throw new Error("Error decrypting ACK message");
-        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey.signatureKey), crypto.hash(_exchangeKey.publicKey))))
+        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey.encode()), crypto.hash((await this.getIdentityKey()).encode()))))
             throw new Error("Error verifing Associated Data");
         return {
             session,
