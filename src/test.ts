@@ -5,8 +5,8 @@ import { decodeUTF8, encodeUTF8 } from "@freesignal/utils";
 const bob = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
 const alice = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
 
-bob.generateData().then(async bobmessage => {
-    const { session: alicesession, message: aliceack } = await alice.digestData(bobmessage);
+bob.generateData().then(async bobdata => {
+    const { session: alicesession, message: aliceack } = await alice.digestData(bobdata);
     const { session: bobsession, identityKey } = await bob.digestMessage(aliceack);
 
     if (bobsession && identityKey) {
