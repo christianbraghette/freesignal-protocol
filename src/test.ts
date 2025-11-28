@@ -1,6 +1,5 @@
-import { AsyncMap, createKeyExchange, Datagram, IdentityKey, Protocols } from ".";
+import { AsyncMap, createKeyExchange, DataDecoder, DataEncoder, Datagram, IdentityKey, Protocols } from ".";
 import crypto from "@freesignal/crypto";
-import { decodeUTF8, encodeUTF8 } from "@freesignal/utils";
 
 const bob = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
 const alice = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
@@ -12,11 +11,12 @@ bob.generateData().then(async bobdata => {
     if (bobsession && identityKey) {
         console.log("Session established successfully between Alice and Bob.");
 
-        const datagram = Datagram.create((await bob.getIdentityKey()).signatureKey, (await alice.getIdentityKey()).signatureKey, Protocols.MESSAGE, (await bobsession.encrypt(encodeUTF8("Hi Alice!"))).encode());
+        const data = new DataEncoder("Hi Alice!");
+        const datagram = Datagram.create((await bob.getIdentityKey()).signatureKey, (await alice.getIdentityKey()).signatureKey, Protocols.MESSAGE, (await bobsession.encrypt(data.encode())).encode());
 
         const msg = datagram.encode();
 
-        console.log(decodeUTF8(await alicesession.decrypt(Datagram.from(msg).payload!) ?? new Uint8Array()));
+        console.log(new DataDecoder(await alicesession.decrypt(Datagram.from(msg).payload!) ?? new Uint8Array()).decode());
 
         if (alicesession.handshaked && bobsession.handshaked)
             console.log("Successfully handshaked");

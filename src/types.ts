@@ -23,35 +23,6 @@ import { LocalStorage, IdentityKey as IdentityKeyInterface, Encodable } from "@f
 import { EncryptedDataConstructor } from "./double-ratchet";
 import fflate from 'fflate';
 
-
-export type UserId = string;
-export namespace UserId {
-
-    class UserIdConstructor {
-        public constructor(private readonly array: Uint8Array) { };
-
-        public toString(): string {
-            return decodeBase64(this.array)
-        }
-
-        public toJSON(): string {
-            return this.toString();
-        }
-
-        public toUint8Array(): Uint8Array {
-            return this.array;
-        }
-    }
-
-    export function getUserId(publicKey: string | Uint8Array): UserIdConstructor {
-        return new UserIdConstructor(crypto.hash(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey)));
-    }
-
-    export function from(userId: string | Uint8Array): UserIdConstructor {
-        return new UserIdConstructor(userId instanceof Uint8Array ? userId : encodeBase64(userId));
-    }
-}
-
 export { IdentityKey } from "@freesignal/interfaces";
 export namespace IdentityKey {
     export const keyLength = crypto.EdDSA.publicKeyLength + crypto.ECDH.publicKeyLength;
@@ -59,42 +30,33 @@ export namespace IdentityKey {
     type IdentityKey = IdentityKeyInterface;
 
     class IdentityKeyConstructor implements IdentityKey, Encodable {
-        private readonly raw: Uint8Array;
+        public readonly signatureKey: Uint8Array;
+        public readonly exchangeKey: Uint8Array;
 
-        /**
-         * Uint8Array: [
-         * publicKey,
-         * indentityKey,
-         * ]
-         */
         constructor(identityKey: IdentityKey | Uint8Array | string) {
-            if (typeof identityKey === 'string')
-                identityKey = encodeBase64(identityKey);
-            else if (identityKey instanceof IdentityKeyConstructor)
-                identityKey = identityKey.raw;
-            if (!isIdentityKeys(identityKey))
-                throw new Error("Invalid key length");
-            this.raw = new Uint8Array(identityKey as Uint8Array);
+            if (identityKey instanceof IdentityKeyConstructor) {
+                this.signatureKey = identityKey.signatureKey;
+                this.exchangeKey = identityKey.exchangeKey;
+            } else {
+                if (typeof identityKey === 'string')
+                    identityKey = encodeBase64(identityKey);
+                if (!isIdentityKeys(identityKey))
+                    throw new Error("Invalid key length");
+                this.signatureKey = (identityKey as Uint8Array).subarray(0, crypto.EdDSA.publicKeyLength);
+                this.exchangeKey = (identityKey as Uint8Array).subarray(crypto.EdDSA.publicKeyLength, keyLength);
+            }
         }
 
         encode(): Uint8Array {
-            return new Uint8Array(this.raw);
+            return concatArrays(this.signatureKey, this.exchangeKey);
         }
 
         toString(): string {
-            return decodeBase64(new Uint8Array(this.raw));
+            return decodeBase64(this.encode());
         }
 
         toJSON(): string {
             return this.toString();
-        }
-
-        get signatureKey(): Uint8Array {
-            return this.raw.subarray(0, crypto.EdDSA.publicKeyLength);
-        }
-
-        get exchangeKey(): Uint8Array {
-            return this.raw.subarray(crypto.ECDH.publicKeyLength, keyLength);
         }
     }
 
@@ -143,6 +105,34 @@ export namespace Protocols {
 
     export function decode(array: Uint8Array): Protocols {
         return Protocols.fromCode(numberFromArray(array));
+    }
+}
+
+export type UserId = string;
+export namespace UserId {
+
+    class UserIdConstructor {
+        public constructor(private readonly array: Uint8Array) { };
+
+        public toString(): string {
+            return decodeBase64(this.array)
+        }
+
+        public toJSON(): string {
+            return this.toString();
+        }
+
+        public toUint8Array(): Uint8Array {
+            return this.array;
+        }
+    }
+
+    export function getUserId(publicKey: string | Uint8Array): UserIdConstructor {
+        return new UserIdConstructor(crypto.hash(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey)));
+    }
+
+    export function from(userId: string | Uint8Array): UserIdConstructor {
+        return new UserIdConstructor(userId instanceof Uint8Array ? userId : encodeBase64(userId));
     }
 }
 
@@ -355,7 +345,7 @@ enum DataType {
     NUMBER,
     STRING,
     ARRAY,
-    OBJECT,
+    OBJECT
 }
 namespace DataType {
     export function getType(type: string): DataType {
@@ -417,16 +407,24 @@ export class DataEncoder<T> implements Encodable {
     }
 
     public toString(): string {
-        return "[Object XFreeSignalData]";
+        return "[Object EncodedData]";
     }
 
     public toJSON(): T {
         return this.data;
     }
+}
 
-    public static from<T = any>(array: Uint8Array) {
-        const type = array[0];
-        let rawData = array.subarray(1), data: T;
+export class DataDecoder {
+    public readonly length: number;
+
+    public constructor(public readonly raw: Uint8Array) {
+        this.length = raw.length;
+    }
+
+    public decode<T = any>(): T {
+        const type = this.raw[0];
+        let rawData = this.raw.subarray(1), data: T;
         switch (type) {
             case DataType.RAW:
                 data = rawData as T;
@@ -465,7 +463,16 @@ export class DataEncoder<T> implements Encodable {
             default:
                 throw new Error('Invalid data format');
         }
-        return new DataEncoder<T>(data);
+
+        return data;
+    }
+
+    public toString(): string {
+        return "[Object DecodedData]";
+    }
+
+    public toJSON(): Uint8Array {
+        return this.raw;
     }
 }
 
@@ -517,7 +524,7 @@ export namespace XFreeSignal {
         }
 
         public static from<T = any>(array: Uint8Array): Body<T> {
-            return new Body<T>(BodyType.getName((array[0] & 64) >> 6), DataEncoder.from((array[0] & 32) >> 5 === 1 ? fflate.inflateSync(array.subarray(1)) : array.subarray(1)).data);
+            return new Body<T>(BodyType.getName((array[0] & 64) >> 6), new DataDecoder((array[0] & 32) >> 5 === 1 ? fflate.inflateSync(array.subarray(1)) : array.subarray(1)).decode());
         }
     }
 
