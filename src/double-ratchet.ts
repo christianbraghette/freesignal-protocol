@@ -271,7 +271,7 @@ export class EncryptedDataConstructor implements EncryptedData {
 
     public get ciphertext() { return new Uint8Array(this.raw.buffer, Offsets.ciphertext.start); }
 
-    public encode(): Uint8Array {
+    public toBytes(): Uint8Array {
         return this.raw;
     }
 

@@ -21,7 +21,7 @@ import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
-import { IdentityKey } from "./types";
+import { PrivateIdentityKey } from "./types";
 
 /**
  * Creates a new Double Ratchet session for secure message exchange.
@@ -42,21 +42,23 @@ export function createKeySession(storage: LocalStorage<string, ExportedKeySessio
  * @param storage - Local storage for keys.
  * @returns A new instance of {@link KeyExchange}.
  */
-export function createKeyExchange(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, secretSignKey?: Uint8Array, secretIdentityKey?: Uint8Array): KeyExchange {
-    return new KeyExchange(storage, secretSignKey, secretIdentityKey);
+export function createKeyExchange(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, privateIdentityKey?: PrivateIdentityKey): KeyExchange {
+    return new KeyExchange(storage, privateIdentityKey);
 }
 
 /**
- * Generates key pairs for signing and encryption.
+ * Generates identity key
  *
- * @param signSecretKey - Optional secret key for EdDSA signing.
- * @param boxSecretKey - Optional secret key for ECDH encryption.
+ * @param seed - Seed to generate the key.
  * @returns An object containing readonly signing and box key pairs.
  */
-export function createIdentityKeys(signSecretKey?: Uint8Array, boxSecretKey?: Uint8Array): { readonly identityKey: IdentityKey, readonly signatureKeyPair: Crypto.KeyPair, readonly exchangeKeyPair: Crypto.KeyPair } {
-    const signatureKeyPair = crypto.EdDSA.keyPair(signSecretKey);
-    const exchangeKeyPair = crypto.ECDH.keyPair(boxSecretKey);
-    return { signatureKeyPair, exchangeKeyPair, identityKey: IdentityKey.from(signatureKeyPair.publicKey, exchangeKeyPair.publicKey) };
+export function createIdentity(seed?: Uint8Array): PrivateIdentityKey {
+    seed ??= crypto.randomBytes(crypto.EdDSA.seedLength);
+    const signatureSeed = crypto.hkdf(seed, new Uint8Array(crypto.EdDSA.seedLength).fill(0), "identity-ed25519", crypto.EdDSA.seedLength);
+    const exchangeSeed = crypto.hkdf(seed, new Uint8Array(crypto.ECDH.secretKeyLength).fill(0), "identity-x25519", crypto.ECDH.secretKeyLength);
+    const signatureKeyPair = crypto.EdDSA.keyPairFromSeed(signatureSeed);
+    const exchangeKeyPair = crypto.ECDH.keyPair(exchangeSeed);
+    return PrivateIdentityKey.from(signatureKeyPair.secretKey, exchangeKeyPair.secretKey);
 }
 
 export * from "./types";

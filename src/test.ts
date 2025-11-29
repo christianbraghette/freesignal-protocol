@@ -1,34 +1,21 @@
-import { AsyncMap, createKeyExchange, DataDecoder, DataEncoder, Datagram, IdentityKey, Protocols } from ".";
-import crypto from "@freesignal/crypto";
+import { decodeData, encodeData } from "@freesignal/utils";
+import { AsyncMap, Protocols } from ".";
+import { FreeSignalNode } from "./node";
 
-const bob = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
-const alice = createKeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() }, crypto.EdDSA.keyPair().secretKey, crypto.ECDH.keyPair().secretKey);
+const bob = new FreeSignalNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap() });
+const alice = new FreeSignalNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap() });
 
-bob.generateData().then(async bobdata => {
-    const { session: alicesession, message: aliceack } = await alice.digestData(bobdata);
-    const { session: bobsession, identityKey } = await bob.digestMessage(aliceack);
+setImmediate(async () => {
+    const aliceHandshake = await alice.sendHandshake(await bob.generateKeyData());
+    await bob.receive<void>(aliceHandshake);
 
-    if (bobsession && identityKey) {
-        console.log("Session established successfully between Alice and Bob.");
+    console.log("Session established successfully between Alice and Bob.");
 
-        const data = new DataEncoder("Hi Alice!");
-        const datagram = Datagram.create((await bob.getIdentityKey()).signatureKey, (await alice.getIdentityKey()).signatureKey, Protocols.MESSAGE, (await bobsession.encrypt(data.encode())).encode());
+    const data = (await bob.encrypt(alice.userId.toString(), Protocols.MESSAGE, encodeData("Hi Alice!"))).toBytes();
 
-        const msg = datagram.encode();
+    console.log(decodeData<string>(await alice.receive(data)));
 
-        console.log(new DataDecoder(await alicesession.decrypt(Datagram.from(msg).payload!) ?? new Uint8Array()).decode());
+    const longmsg = await alice.sendData(bob.userId.toString(), new Uint8Array(1000000).fill(33).map(val => val + Math.floor(Math.random() * 93)));
 
-        if (alicesession.handshaked && bobsession.handshaked)
-            console.log("Successfully handshaked");
-        else
-            console.log("Error during handshake")
-
-        const longmsg = Datagram.create((await bob.getIdentityKey()).signatureKey, (await alice.getIdentityKey()).signatureKey, Protocols.MESSAGE, await alicesession.encrypt(
-            new Uint8Array(1000000).fill(33).map(
-                val => val + Math.floor(Math.random() * 93)
-            )
-        ));
-
-        console.log(longmsg.encode().length);
-    } else console.log("Error")
+    console.log(longmsg.toBytes().length);
 });

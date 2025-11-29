@@ -19,22 +19,57 @@
 
 import { concatArrays, decodeBase64, decodeJSON, decodeUTF8, encodeBase64, encodeJSON, encodeUTF8, numberFromArray, numberToArray } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
-import { LocalStorage, IdentityKey as IdentityKeyInterface, Encodable } from "@freesignal/interfaces";
+import { LocalStorage, Encodable } from "@freesignal/interfaces";
 import { EncryptedDataConstructor } from "./double-ratchet";
-import fflate from 'fflate';
 
-export { IdentityKey } from "@freesignal/interfaces";
+export class UserId {
+    private constructor(private readonly array: Uint8Array) { };
+
+    public toString(): string {
+        return decodeBase64(this.array)
+    }
+
+    public toJSON(): string {
+        return this.toString();
+    }
+
+    public toUint8Array(): Uint8Array {
+        return this.array;
+    }
+
+    public static fromKey(identityKey: string | Uint8Array | IdentityKey): UserId {
+        if (typeof identityKey === 'string')
+            identityKey = encodeBase64(identityKey);
+        else if (IdentityKey.isIdentityKeys(identityKey))
+            identityKey = (identityKey as IdentityKey).toBytes();
+        return new UserId(crypto.hash(identityKey as Uint8Array));
+    }
+
+    public static from(userId: string | Uint8Array | UserId): UserId {
+        if (typeof userId === 'string')
+            userId = encodeBase64(userId);
+        return new UserId(userId instanceof Uint8Array ? userId : userId.array);
+    }
+}
+
+export interface IdentityKey extends Encodable {
+    readonly info: number;
+    readonly signatureKey: Uint8Array;
+    readonly exchangeKey: Uint8Array;
+}
 export namespace IdentityKey {
-    export const keyLength = crypto.EdDSA.publicKeyLength + crypto.ECDH.publicKeyLength;
-
-    type IdentityKey = IdentityKeyInterface;
+    export const keyLength = crypto.EdDSA.publicKeyLength + crypto.ECDH.publicKeyLength + 1;
+    const info = 0x70;
+    export const version = 1;
 
     class IdentityKeyConstructor implements IdentityKey, Encodable {
+        public readonly info: number;
         public readonly signatureKey: Uint8Array;
         public readonly exchangeKey: Uint8Array;
 
         constructor(identityKey: IdentityKey | Uint8Array | string) {
             if (identityKey instanceof IdentityKeyConstructor) {
+                this.info = identityKey.info;
                 this.signatureKey = identityKey.signatureKey;
                 this.exchangeKey = identityKey.exchangeKey;
             } else {
@@ -42,17 +77,22 @@ export namespace IdentityKey {
                     identityKey = encodeBase64(identityKey);
                 if (!isIdentityKeys(identityKey))
                     throw new Error("Invalid key length");
-                this.signatureKey = (identityKey as Uint8Array).subarray(0, crypto.EdDSA.publicKeyLength);
-                this.exchangeKey = (identityKey as Uint8Array).subarray(crypto.EdDSA.publicKeyLength, keyLength);
+                this.info = (identityKey as Uint8Array)[0];
+                this.signatureKey = (identityKey as Uint8Array).subarray(1, crypto.EdDSA.publicKeyLength + 1);
+                this.exchangeKey = (identityKey as Uint8Array).subarray(crypto.EdDSA.publicKeyLength + 1, keyLength);
             }
         }
 
-        encode(): Uint8Array {
-            return concatArrays(this.signatureKey, this.exchangeKey);
+        get userId() {
+            return UserId.fromKey(this.toBytes()).toString();
+        }
+
+        toBytes(): Uint8Array {
+            return concatArrays(numberToArray(this.info), this.signatureKey, this.exchangeKey);
         }
 
         toString(): string {
-            return decodeBase64(this.encode());
+            return decodeBase64(this.toBytes());
         }
 
         toJSON(): string {
@@ -61,21 +101,90 @@ export namespace IdentityKey {
     }
 
     export function isIdentityKeys(obj: any): boolean {
-        return (obj instanceof Uint8Array && obj.length === keyLength);
+        return (obj instanceof Uint8Array && obj.length === keyLength) || obj instanceof IdentityKeyConstructor;
     }
 
     export function from(identityKey: IdentityKey | Uint8Array | string): IdentityKey
-    export function from(signatureKey: IdentityKey | Uint8Array | string, exchangeKey: IdentityKey | Uint8Array | string): IdentityKey
+    export function from(signatureKey: Uint8Array | string, exchangeKey: Uint8Array | string): IdentityKey
     export function from(...keys: (IdentityKey | Uint8Array | string)[]): IdentityKey {
         keys = keys.map(key => {
             if (key instanceof IdentityKeyConstructor)
-                return key.encode();
+                return key.toBytes();
             else if (typeof key === 'string')
                 return encodeBase64(key);
             else
                 return key as Uint8Array;
         });
-        return new IdentityKeyConstructor(keys.length === 2 ? concatArrays(...keys as Uint8Array[]) : keys[0]);
+        return new IdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version), ...keys as Uint8Array[]) : keys[0]);
+    }
+}
+
+export interface PrivateIdentityKey {
+    readonly info: number;
+    readonly signatureKey: Uint8Array;
+    readonly exchangeKey: Uint8Array;
+    readonly identityKey: IdentityKey;
+}
+export namespace PrivateIdentityKey {
+    export const keyLength = crypto.EdDSA.secretKeyLength + crypto.ECDH.secretKeyLength + 1;
+    const info = 0x4E;
+    export const version = 1;
+
+    class PrivateIdentityKeyConstructor implements PrivateIdentityKey, Encodable {
+        public readonly info: number = info + version;
+        public readonly signatureKey: Uint8Array;
+        public readonly exchangeKey: Uint8Array;
+        public readonly identityKey: IdentityKey;
+
+        constructor(privateIdentityKey: PrivateIdentityKey | Uint8Array | string) {
+            if (privateIdentityKey instanceof PrivateIdentityKeyConstructor) {
+                this.signatureKey = privateIdentityKey.signatureKey;
+                this.exchangeKey = privateIdentityKey.exchangeKey;
+                this.identityKey = privateIdentityKey.identityKey;
+            } else {
+                if (typeof privateIdentityKey === 'string')
+                    privateIdentityKey = encodeBase64(privateIdentityKey);
+                if (!isIdentityKeys(privateIdentityKey))
+                    throw new Error("Invalid key length");
+                this.signatureKey = (privateIdentityKey as Uint8Array).subarray(1, crypto.EdDSA.secretKeyLength + 1);
+                this.exchangeKey = (privateIdentityKey as Uint8Array).subarray(crypto.EdDSA.secretKeyLength + 1, keyLength);
+                this.identityKey = IdentityKey.from(crypto.EdDSA.keyPair(this.signatureKey).publicKey, crypto.ECDH.keyPair(this.exchangeKey).publicKey);
+            }
+        }
+
+        get userId() {
+            return UserId.fromKey(this.identityKey.toBytes()).toString();
+        }
+
+        toBytes(): Uint8Array {
+            return concatArrays(numberToArray(this.info), this.signatureKey, this.exchangeKey);
+        }
+
+        toString(): string {
+            return decodeBase64(this.toBytes());
+        }
+
+        toJSON(): string {
+            return this.toString();
+        }
+    }
+
+    export function isIdentityKeys(obj: any): boolean {
+        return (obj instanceof Uint8Array && obj.length === keyLength) || obj instanceof PrivateIdentityKeyConstructor;
+    }
+
+    export function from(identityKey: PrivateIdentityKey | Uint8Array | string): PrivateIdentityKey
+    export function from(signatureKey: Uint8Array | string, exchangeKey: Uint8Array | string): PrivateIdentityKey
+    export function from(...keys: (PrivateIdentityKey | Uint8Array | string)[]): PrivateIdentityKey {
+        keys = keys.map(key => {
+            if (key instanceof PrivateIdentityKeyConstructor)
+                return key.toBytes();
+            else if (typeof key === 'string')
+                return encodeBase64(key);
+            else
+                return key as Uint8Array;
+        });
+        return new PrivateIdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version), ...keys as Uint8Array[]) : keys[0]);
     }
 }
 
@@ -83,7 +192,8 @@ export enum Protocols {
     NULL = '',
     MESSAGE = '/freesignal/message',
     RELAY = '/freesignal/relay',
-    HANDSHAKE = '/freesignal/handshake'
+    HANDSHAKE = '/freesignal/handshake',
+    DISCOVER = '/freesignal/discover'
 }
 export namespace Protocols {
 
@@ -108,158 +218,117 @@ export namespace Protocols {
     }
 }
 
-export type UserId = string;
-export namespace UserId {
+export class Datagram implements Encodable {
+    public static version = 1;
 
-    class UserIdConstructor {
-        public constructor(private readonly array: Uint8Array) { };
+    private _id: string;
+    private _version: number;
+    public readonly sender: string;
+    public readonly receiver: string;
+    public readonly protocol: Protocols;
+    private _createdAt: number;
 
-        public toString(): string {
-            return decodeBase64(this.array)
-        }
+    private _payload?: Uint8Array;
+    private _signature?: Uint8Array;
+    private secretKey?: Uint8Array;
 
-        public toJSON(): string {
-            return this.toString();
-        }
+    private static headerOffset = 26 + crypto.EdDSA.publicKeyLength * 2;
 
-        public toUint8Array(): Uint8Array {
-            return this.array;
+    public constructor(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable) {
+        this._id = crypto.UUID.generate().toString();
+        this._version = Datagram.version;
+        this.sender = typeof sender === 'string' ? sender : decodeBase64(sender);
+        this.receiver = typeof receiver === 'string' ? receiver : decodeBase64(receiver!);
+        this.protocol = protocol!;
+        this._createdAt = Date.now();
+        this._payload = payload instanceof Uint8Array ? payload : payload?.toBytes();
+    }
+
+    public get id() {
+        return this._id;
+    }
+
+    public get version() {
+        return this._version;
+    }
+
+    public get createdAt() {
+        return this._createdAt;
+    }
+
+    public get signed(): boolean {
+        return !!this._signature || !!this.secretKey;
+    }
+
+    public get signature(): string | undefined {
+        if (this.signed) {
+            if (!this._signature)
+                this.toBytes();
+            return decodeBase64(this._signature!);
         }
     }
 
-    export function getUserId(publicKey: string | Uint8Array): UserIdConstructor {
-        return new UserIdConstructor(crypto.hash(publicKey instanceof Uint8Array ? publicKey : encodeBase64(publicKey)));
+    public set payload(data: Uint8Array) {
+        this._signature = undefined;
+        this._payload = data;
     }
 
-    export function from(userId: string | Uint8Array): UserIdConstructor {
-        return new UserIdConstructor(userId instanceof Uint8Array ? userId : encodeBase64(userId));
+    public get payload(): Uint8Array | undefined {
+        return this._payload;
     }
-}
 
-export interface Datagram {
-    readonly id: string;
-    readonly version: number;
-    readonly sender: string;
-    readonly receiver: string;
-    readonly protocol: Protocols;
-    readonly createdAt: number;
-    payload?: Uint8Array;
-    readonly signature?: string;
-}
-export namespace Datagram {
-    export const version = 1;
+    public toBytes(): Uint8Array {
+        const data = concatArrays(
+            new Uint8Array(1).fill(this.version | (this.secretKey ? 128 : 0)), //1
+            Protocols.encode(this.protocol), //1
+            crypto.UUID.parse(this.id) ?? [], //16
+            numberToArray(this.createdAt, 8), //8
+            encodeBase64(this.sender), //32
+            encodeBase64(this.receiver), //32
+            this._payload ?? new Uint8Array()
+        );
+        if (this.secretKey) this._signature = crypto.EdDSA.sign(data, this.secretKey);
+        return concatArrays(data, this._signature ?? new Uint8Array());
+    }
 
-    class DatagramConstructor implements Encodable, Datagram {
-        public readonly id: string;
-        public readonly version: number;
-        public readonly sender: UserId;
-        public readonly receiver: UserId;
-        public readonly protocol: Protocols;
-        public readonly createdAt: number;
-        public _payload?: Uint8Array;
-        public _signature?: Uint8Array;
-        private secretKey?: Uint8Array;
+    public sign(secretKey: Uint8Array): this {
+        this.secretKey = secretKey;
+        return this
+    }
 
-        private static headerOffset = 26 + crypto.EdDSA.publicKeyLength * 2;
+    public toString(): string {
+        return decodeBase64(this.toBytes());
+    }
 
-        public constructor(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable)
-        public constructor(data: Uint8Array | Datagram)
-        public constructor(data: Uint8Array | string | Datagram, receiver?: Uint8Array | string, protocol?: Protocols, payload?: Uint8Array | Encodable) {
-            if (!receiver && !protocol && !payload) {
-                if (data instanceof Uint8Array) {
-                    this.version = data[0] & 127;
-                    this.protocol = Protocols.decode(data.subarray(1, 2));
-                    this.id = crypto.UUID.stringify(data.subarray(2, 18));
-                    this.createdAt = numberFromArray(data.subarray(18, 26));
-                    this.sender = decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
-                    this.receiver = decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramConstructor.headerOffset));
-                    if (data[0] & 128)
-                        this._signature = data.subarray(data.length - crypto.EdDSA.signatureLength);
-                    this._payload = data.subarray(DatagramConstructor.headerOffset, data.length);
-                } else if (Datagram.isDatagram(data)) {
-                    const datagram = data as Datagram;
-                    this.id = datagram.id;
-                    this.version = datagram.version;
-                    this.sender = datagram.sender;
-                    this.receiver = datagram.receiver;
-                    this.protocol = datagram.protocol;
-                    this.createdAt = datagram.createdAt;
-                    this._payload = datagram.payload;
-                    this._signature = datagram.signature ? encodeBase64(datagram.signature) : undefined;
-                } else throw new Error('Invalid constructor arguments for Datagram');
-            } else if (typeof data === 'string' || data instanceof Uint8Array) {
-                this.id = crypto.UUID.generate().toString();
-                this.version = Datagram.version;
-                this.sender = typeof data === 'string' ? data : decodeBase64(data);
-                this.receiver = typeof receiver === 'string' ? receiver : decodeBase64(receiver!);
-                this.protocol = protocol!;
-                this.createdAt = Date.now();
-                this._payload = payload instanceof Uint8Array ? payload : payload?.encode();
-            } else throw new Error('Invalid constructor arguments for Datagram');
-        }
+    public toJSON(): string {
+        return this.toString();
+    }
 
-        public get signed(): boolean {
-            return !!this._signature || !!this.secretKey;
-        }
-
-        public get signature(): string | undefined {
-            if (this.signed) {
-                if (!this._signature)
-                    this.encode();
-                return decodeBase64(this._signature!);
-            }
-        }
-
-        public set payload(data: Uint8Array) {
-            this._signature = undefined;
-            this._payload = data;
-        }
-
-        public get payload(): Uint8Array | undefined {
-            return this._payload;
-        }
-
-        public encode(): Uint8Array {
-            const data = concatArrays(
-                new Uint8Array(1).fill(this.version | (this.secretKey ? 128 : 0)), //1
-                Protocols.encode(this.protocol), //1
-                crypto.UUID.parse(this.id) ?? [], //16
-                numberToArray(this.createdAt, 8), //8
-                encodeBase64(this.sender), //32
-                encodeBase64(this.receiver), //32
-                this._payload ?? new Uint8Array()
+    public static from(data: Uint8Array | Datagram | string): Datagram {
+        if (typeof data === 'string')
+            data = encodeBase64(data);
+        if (data instanceof Uint8Array) {
+            const datagram = new Datagram(
+                decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength)),
+                decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, Datagram.headerOffset)),
+                Protocols.decode(data.subarray(1, 2)),
+                data.subarray(Datagram.headerOffset, data.length)
             );
-            if (this.secretKey) this._signature = crypto.EdDSA.sign(data, this.secretKey);
-            return concatArrays(data, this._signature ?? new Uint8Array());
-        }
-
-        public sign(secretKey: Uint8Array): this {
-            this.secretKey = secretKey;
-            return this
-        }
-
-        public toString(): string {
-            return decodeBase64(this.encode());
-        }
-
-        public toJSON(): string {
-            return this.toString();
-        }
-    }
-
-    export function create(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable): DatagramConstructor {
-        return new DatagramConstructor(sender, receiver, protocol, payload);
-    }
-
-    export function isDatagram(obj: any): boolean {
-        return obj instanceof DatagramConstructor || (obj && typeof obj === 'object' && 'id' in obj && 'version' in obj && 'sender' in obj && 'receiver' in obj && 'protocol' in obj && 'createdAt' in obj);
-    }
-
-    export function from(data: Uint8Array | Datagram | string): DatagramConstructor {
-        if (typeof data === 'string') {
-            const decoded = encodeBase64(data);
-            return new DatagramConstructor(decoded);
-        } else return new DatagramConstructor(data);
+            datagram._version = data[0] & 127;
+            datagram._id = crypto.UUID.stringify(data.subarray(2, 18));
+            datagram._createdAt = numberFromArray(data.subarray(18, 26));
+            if (data[0] & 128)
+                datagram._signature = data.subarray(data.length - crypto.EdDSA.signatureLength);
+            return datagram;
+        } else if (data instanceof Datagram) {
+            const datagram = new Datagram(data.sender, data.receiver, data.protocol, data.payload);
+            datagram._id = datagram.id;
+            datagram._version = datagram.version;
+            datagram._createdAt = datagram.createdAt;
+            datagram._signature = datagram.signature ? encodeBase64(datagram.signature) : undefined;
+            return datagram;
+        } else
+            throw new Error('Invalid constructor arguments for Datagram');
     }
 }
 
@@ -307,7 +376,7 @@ export interface EncryptedData extends Encodable {
     /**
      * Serializes the payload into a Uint8Array for transport.
      */
-    encode(): Uint8Array;
+    toBytes(): Uint8Array;
 
     /**
      * Returns the payload as a Base64 string.
@@ -337,197 +406,6 @@ export class EncryptedData {
     public static from(array: Uint8Array | EncryptedData) {
         return new EncryptedDataConstructor(array) as EncryptedData;
     }
-}
-
-enum DataType {
-    UKNOWN = -1,
-    RAW,
-    NUMBER,
-    STRING,
-    ARRAY,
-    OBJECT
-}
-namespace DataType {
-    export function getType(type: string): DataType {
-        return Object.values(DataType).indexOf(type.toLocaleUpperCase());
-    }
-
-    export function getName(type: DataType): string {
-        return DataType[type].toLowerCase();
-    }
-
-    export function from(data: any): DataType {
-        if (data instanceof Uint8Array)
-            return DataType.RAW;
-        return getType(typeof data);
-    }
-}
-
-export class DataEncoder<T> implements Encodable {
-    public readonly type: string;
-
-    public constructor(public readonly data: T) {
-        this.type = DataType.getName(DataType.from(this.data));
-    }
-
-    protected get _type(): DataType {
-        return DataType.getType(this.type);
-    }
-
-    public encode(): Uint8Array {
-        let data: Uint8Array
-        switch (this._type) {
-            case DataType.RAW:
-                data = this.data as Uint8Array;
-                break;
-
-            case DataType.NUMBER:
-                data = numberToArray(this._type);
-                break;
-
-            case DataType.STRING:
-                data = encodeUTF8(this.data as string);
-                break;
-
-            case DataType.ARRAY:
-                data = concatArrays(...Array.from(this.data as any[]).flatMap(value => {
-                    const data = new DataEncoder(value).encode();
-                    return [numberToArray(data.length, 8), data]
-                }));
-                break;
-
-            case DataType.OBJECT:
-                data = encodeJSON(this.data);
-                break;
-
-            default:
-                throw new Error("Uknown type");
-        }
-        return concatArrays(numberToArray(this._type), data);
-    }
-
-    public toString(): string {
-        return "[Object EncodedData]";
-    }
-
-    public toJSON(): T {
-        return this.data;
-    }
-}
-
-export class DataDecoder {
-    public readonly length: number;
-
-    public constructor(public readonly raw: Uint8Array) {
-        this.length = raw.length;
-    }
-
-    public decode<T = any>(): T {
-        const type = this.raw[0];
-        let rawData = this.raw.subarray(1), data: T;
-        switch (type) {
-            case DataType.RAW:
-                data = rawData as T;
-                break;
-
-            case DataType.NUMBER:
-                data = numberFromArray(rawData) as T;
-                break;
-
-            case DataType.STRING:
-                data = decodeUTF8(rawData) as T;
-                break;
-
-            case DataType.ARRAY:
-                const arrayData: any[] = [];
-                let offset = 0;
-                while (offset < rawData.length) {
-                    const length = rawData.subarray(offset, offset + 8);
-                    if (length.length < 8)
-                        throw new Error('Invalid data length');
-                    const messageLength = numberFromArray(length);
-                    offset += 8;
-                    if (offset + messageLength > rawData.length) {
-                        throw new Error('Invalid data length');
-                    }
-                    arrayData.push(rawData.subarray(offset, offset + messageLength));
-                    offset += messageLength;
-                }
-                data = arrayData as T;
-                break;
-
-            case DataType.OBJECT:
-                data = decodeJSON(rawData);
-                break;
-
-            default:
-                throw new Error('Invalid data format');
-        }
-
-        return data;
-    }
-
-    public toString(): string {
-        return "[Object DecodedData]";
-    }
-
-    public toJSON(): Uint8Array {
-        return this.raw;
-    }
-}
-
-export namespace XFreeSignal {
-    export const MIME = "application/x-freesignal";
-    export const version = 1;
-
-    export function encodeBody(type: 'data' | 'error', data: any, compressed = false): BodyInit {
-        return new Body(type, data).encode(compressed) as BodyInit;
-    }
-
-    export function decodeBody<T = any>(body: Uint8Array): Body<T> {
-        return Body.from(body);
-    }
-
-    enum BodyType {
-        DATA,
-        ERROR
-    }
-    namespace BodyType {
-        export function getName(type: BodyType): 'data' | 'error' {
-            return BodyType[type].toLowerCase() as any;
-        }
-    }
-
-    class Body<T> implements Encodable {
-
-        public constructor(public readonly type: 'data' | 'error', public readonly data: T) { }
-
-        encode(compressed = false): Uint8Array {
-            const data = new DataEncoder(this.data).encode();
-            return concatArrays(
-                numberToArray(
-                    ((this.type === 'data' ? BodyType.DATA : BodyType.ERROR) << 6)
-                    + (compressed ? 32 : 0)
-                    + XFreeSignal.version
-                ), compressed ? fflate.deflateSync(data) : data);
-        }
-
-        toString(): string {
-            return "[Object XFreeSignalBody]";
-        }
-
-        toJSON() {
-            return {
-                type: this.type,
-                data: this.data
-            };
-        }
-
-        public static from<T = any>(array: Uint8Array): Body<T> {
-            return new Body<T>(BodyType.getName((array[0] & 64) >> 6), new DataDecoder((array[0] & 32) >> 5 === 1 ? fflate.inflateSync(array.subarray(1)) : array.subarray(1)).decode());
-        }
-    }
-
 }
 
 export class AsyncMap<K, V> implements LocalStorage<K, V> {

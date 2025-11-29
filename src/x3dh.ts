@@ -21,9 +21,11 @@ import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { concatArrays, decodeBase64, encodeBase64, encodeUTF8, verifyArrays } from "@freesignal/utils";
-import { IdentityKey } from "./types";
+import { IdentityKey, PrivateIdentityKey } from "./types";
+import { createIdentity } from ".";
 
 export interface ExportedKeyExchange {
+    privateIdentityKey: PrivateIdentityKey;
     storage: Array<[string, Crypto.KeyPair]>;
 }
 
@@ -31,45 +33,19 @@ export class KeyExchange {
     public static readonly version = 1;
     private static readonly hkdfInfo = encodeUTF8("freesignal/x3dh/" + KeyExchange.version);
     private static readonly maxOPK = 10;
-    private static readonly signatureKeySymbol = decodeBase64(crypto.hash(encodeUTF8("signatureKeySymbol")));
-    private static readonly exchangeKeySymbol = decodeBase64(crypto.hash(encodeUTF8("exchangeKeySymbol")));
 
+    private readonly privateIdentityKey: PrivateIdentityKey;
     private readonly storage: LocalStorage<string, Crypto.KeyPair>;
     private readonly sessions: LocalStorage<string, ExportedKeySession>;
 
-    public constructor(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, secretSignKey?: Uint8Array, secretExchangeKey?: Uint8Array) {
+    public constructor(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, privateIdentityKey?: PrivateIdentityKey) {
         this.storage = storage.keys;
         this.sessions = storage.sessions;
-        if (secretSignKey)
-            this.setSignatureKey(secretSignKey);
-        if (secretExchangeKey)
-            this.setExchangeKey(secretExchangeKey);
+        this.privateIdentityKey = privateIdentityKey ?? createIdentity();
     }
 
-    private async getSignatureKey(): Promise<Crypto.KeyPair> {
-        const signatureKey = await this.storage.get(KeyExchange.signatureKeySymbol);
-        if (!signatureKey)
-            throw new Error("signatureKey missing");
-        return signatureKey;
-    }
-
-    private setSignatureKey(secretKey: Uint8Array): Promise<void> {
-        return this.storage.set(KeyExchange.signatureKeySymbol, crypto.EdDSA.keyPair(secretKey));
-    }
-
-    private async getExchangeKey(): Promise<Crypto.KeyPair> {
-        const exchangeKey = await this.storage.get(KeyExchange.exchangeKeySymbol);
-        if (!exchangeKey)
-            throw new Error("signatureKey missing");
-        return exchangeKey;
-    }
-
-    private setExchangeKey(secretKey: Uint8Array): Promise<void> {
-        return this.storage.set(KeyExchange.exchangeKeySymbol, crypto.ECDH.keyPair(secretKey));
-    }
-
-    public async getIdentityKey(): Promise<IdentityKey> {
-        return IdentityKey.from((await this.getSignatureKey()).publicKey, (await this.getExchangeKey()).publicKey);
+    public get identityKey(): IdentityKey {
+        return this.privateIdentityKey.identityKey;
     }
 
     private generateSPK(): { signedPreKey: Crypto.KeyPair, signedPreKeyHash: Uint8Array } {
@@ -91,9 +67,9 @@ export class KeyExchange {
         const onetimePreKey = new Array(length ?? KeyExchange.maxOPK).fill(0).map(() => this.generateOPK(signedPreKeyHash).onetimePreKey);
         return {
             version: KeyExchange.version,
-            identityKey: (await this.getIdentityKey()).toString(),
+            identityKey: this.identityKey.toString(),
             signedPreKey: decodeBase64(signedPreKey.publicKey),
-            signature: decodeBase64(crypto.EdDSA.sign(signedPreKeyHash, (await this.getSignatureKey()).secretKey)),
+            signature: decodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this.privateIdentityKey.signatureKey)),
             onetimePreKey: onetimePreKey.map(opk => decodeBase64(opk.publicKey))
         }
     }
@@ -103,9 +79,9 @@ export class KeyExchange {
         const { onetimePreKey } = this.generateOPK(signedPreKeyHash);
         return {
             version: KeyExchange.version,
-            identityKey: (await this.getIdentityKey()).toString(),
+            identityKey: this.identityKey.toString(),
             signedPreKey: decodeBase64(signedPreKey.publicKey),
-            signature: decodeBase64(crypto.EdDSA.sign(signedPreKeyHash, (await this.getSignatureKey()).secretKey)),
+            signature: decodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this.privateIdentityKey.signatureKey)),
             onetimePreKey: decodeBase64(onetimePreKey.publicKey)
         }
     }
@@ -119,26 +95,25 @@ export class KeyExchange {
         const onetimePreKey = message.onetimePreKey ? encodeBase64(message.onetimePreKey) : undefined;
         const signedPreKeyHash = crypto.hash(signedPreKey);
         const onetimePreKeyHash = onetimePreKey ? crypto.hash(onetimePreKey) : new Uint8Array();
-        const exchangeKey = await this.getExchangeKey();
         const rootKey = crypto.hkdf(new Uint8Array([
-            ...crypto.ECDH.scalarMult(exchangeKey.secretKey, signedPreKey),
+            ...crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, signedPreKey),
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, identityKey.exchangeKey),
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, signedPreKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
         const session = new KeySession(this.sessions, { remoteKey: identityKey.exchangeKey, rootKey });
-        const cyphertext = await session.encrypt(concatArrays(crypto.hash((await this.getIdentityKey()).encode()), crypto.hash(identityKey.encode())));
+        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.exchangeKey), crypto.hash(identityKey.exchangeKey)));
         if (!cyphertext) throw new Error("Decryption error");
 
         return {
             session,
             message: {
                 version: KeyExchange.version,
-                identityKey: (await this.getIdentityKey()).toString(),
+                identityKey: this.identityKey.toString(),
                 ephemeralKey: decodeBase64(ephemeralKey.publicKey),
                 signedPreKeyHash: decodeBase64(signedPreKeyHash),
                 onetimePreKeyHash: decodeBase64(onetimePreKeyHash),
-                associatedData: decodeBase64(cyphertext.encode())
+                associatedData: decodeBase64(cyphertext.toBytes())
             },
             identityKey
         }
@@ -152,32 +127,20 @@ export class KeyExchange {
         if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey) throw new Error("ACK message malformed");
         if (!this.storage.delete(hash)) throw new Error("Bundle store deleting error");
         const ephemeralKey = encodeBase64(message.ephemeralKey);
-        const _exchangeKey = await this.getExchangeKey();
         const rootKey = crypto.hkdf(new Uint8Array([
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, identityKey.exchangeKey),
-            ...crypto.ECDH.scalarMult(_exchangeKey.secretKey, ephemeralKey),
+            ...crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, ephemeralKey),
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, ephemeralKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
-        const session = new KeySession(this.sessions, { secretKey: _exchangeKey.secretKey, rootKey })
+        const session = new KeySession(this.sessions, { secretKey: this.privateIdentityKey.exchangeKey, rootKey })
         const cleartext = await session.decrypt(encodeBase64(message.associatedData));
         if (!cleartext) throw new Error("Error decrypting ACK message");
-        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey.encode()), crypto.hash((await this.getIdentityKey()).encode()))))
+        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey.exchangeKey), crypto.hash(this.identityKey.exchangeKey))))
             throw new Error("Error verifing Associated Data");
         return {
             session,
             identityKey
         };
-    }
-
-    public toJSON(): ExportedKeyExchange {
-        return {
-            storage: Array.from(this.storage.entries())
-        }
-    }
-
-    public static from(data: ExportedKeyExchange, storage: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession>) {
-        Promise.all(data.storage.map(([key, value]) => storage.set(key, value)));
-        return new KeyExchange({ keys: storage, sessions });
     }
 }
