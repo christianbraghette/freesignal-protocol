@@ -20,7 +20,7 @@
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
-import { concatArrays, decodeBase64, encodeBase64, encodeUTF8, verifyArrays } from "@freesignal/utils";
+import { concatArrays, decodeBase64, encodeBase64, verifyArrays } from "@freesignal/utils";
 import { IdentityKey, PrivateIdentityKey } from "./types";
 import { createIdentity } from ".";
 
@@ -31,7 +31,7 @@ export interface ExportedKeyExchange {
 
 export class KeyExchange {
     public static readonly version = 1;
-    private static readonly hkdfInfo = encodeUTF8("freesignal/x3dh/" + KeyExchange.version);
+    private static readonly hkdfInfo = "freesignal/x3dh/" + KeyExchange.version;
     private static readonly maxOPK = 10;
 
     private readonly privateIdentityKey: PrivateIdentityKey;
@@ -100,9 +100,9 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, identityKey.exchangeKey),
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, signedPreKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
-        ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
+        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
         const session = new KeySession(this.sessions, { remoteKey: identityKey.exchangeKey, rootKey });
-        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.exchangeKey), crypto.hash(identityKey.exchangeKey)));
+        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes())));
         if (!cyphertext) throw new Error("Decryption error");
 
         return {
@@ -132,11 +132,11 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, ephemeralKey),
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, ephemeralKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
-        ]), new Uint8Array(KeySession.rootKeyLength).fill(0), KeyExchange.hkdfInfo, KeySession.rootKeyLength);
+        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
         const session = new KeySession(this.sessions, { secretKey: this.privateIdentityKey.exchangeKey, rootKey })
         const cleartext = await session.decrypt(encodeBase64(message.associatedData));
         if (!cleartext) throw new Error("Error decrypting ACK message");
-        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey.exchangeKey), crypto.hash(this.identityKey.exchangeKey))))
+        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey.toBytes()), crypto.hash(this.identityKey.toBytes()))))
             throw new Error("Error verifing Associated Data");
         return {
             session,

@@ -18,10 +18,11 @@
  */
 
 import crypto from "@freesignal/crypto";
-import { LocalStorage, Crypto } from "@freesignal/interfaces";
+import { LocalStorage, Crypto, Database } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
-import { PrivateIdentityKey } from "./types";
+import { IdentityKey, PrivateIdentityKey } from "./types";
+import { FreeSignalNode } from "./node";
 
 /**
  * Creates a new Double Ratchet session for secure message exchange.
@@ -32,9 +33,9 @@ import { PrivateIdentityKey } from "./types";
  * @param opts.rootKey - An optional root key to initialize the session.
  * @returns A new instance of {@link KeySession}.
  */
-export function createKeySession(storage: LocalStorage<string, ExportedKeySession>, opts?: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array }): KeySession {
+/*export function createKeySession(storage: LocalStorage<string, ExportedKeySession>, opts?: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array }): KeySession {
     return new KeySession(storage, opts);
-}
+}*/
 
 /**
  * Creates a new X3DH (Extended Triple Diffie-Hellman) key exchange session.
@@ -42,9 +43,9 @@ export function createKeySession(storage: LocalStorage<string, ExportedKeySessio
  * @param storage - Local storage for keys.
  * @returns A new instance of {@link KeyExchange}.
  */
-export function createKeyExchange(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, privateIdentityKey?: PrivateIdentityKey): KeyExchange {
+/*export function createKeyExchange(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, privateIdentityKey?: PrivateIdentityKey): KeyExchange {
     return new KeyExchange(storage, privateIdentityKey);
-}
+}*/
 
 /**
  * Generates identity key
@@ -59,6 +60,15 @@ export function createIdentity(seed?: Uint8Array): PrivateIdentityKey {
     const signatureKeyPair = crypto.EdDSA.keyPairFromSeed(signatureSeed);
     const exchangeKeyPair = crypto.ECDH.keyPair(exchangeSeed);
     return PrivateIdentityKey.from(signatureKeyPair.secretKey, exchangeKeyPair.secretKey);
+}
+
+/** */
+export function createNode(storage: Database<{
+    sessions: LocalStorage<string, ExportedKeySession>;
+    keyExchange: LocalStorage<string, Crypto.KeyPair>;
+    users: LocalStorage<string, IdentityKey>;
+}>, privateIdentityKey?: PrivateIdentityKey): FreeSignalNode {
+    return new FreeSignalNode(storage, privateIdentityKey);
 }
 
 export * from "./types";

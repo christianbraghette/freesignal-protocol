@@ -7,8 +7,7 @@ import { decodeData, encodeData } from "@freesignal/utils";
 
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
-    protected readonly sessions: Map<string, KeySession> = new Map();
-    protected readonly sessionsData: LocalStorage<string, ExportedKeySession>;
+    protected readonly sessions: SessionMap;
     protected readonly users: LocalStorage<string, IdentityKey>;
     protected readonly keyExchange: KeyExchange;
 
@@ -18,12 +17,9 @@ export class FreeSignalNode {
         users: LocalStorage<string, IdentityKey>
     }>, privateIdentityKey?: PrivateIdentityKey) {
         this.privateIdentityKey = privateIdentityKey ?? createIdentity();
-        this.sessionsData = storage.sessions;
+        this.sessions = new SessionMap(storage.sessions);
         this.keyExchange = new KeyExchange({ keys: storage.keyExchange, sessions: storage.sessions }, this.privateIdentityKey);
         this.users = storage.users;
-        /*Array.from(this.sessionsData.entries()).forEach(([userId, sessionData]) => {
-            this.sessions.set(userId, KeySession.from(sessionData, this.sessionsData));
-        });*/
     }
 
     public get userId(): UserId {
@@ -43,7 +39,7 @@ export class FreeSignalNode {
     };
 
     public async encrypt(receiverId: string, protocol: Protocols, data: Uint8Array): Promise<Datagram> {
-        const session = this.sessions.get(receiverId);
+        const session = await this.sessions.get(receiverId);
         if (!session)
             throw new Error("Session not found for user: " + receiverId);
         return new Datagram(this.userId.toString(), receiverId, protocol, await session.encrypt(data));
@@ -70,7 +66,7 @@ export class FreeSignalNode {
 
     public async decrypt(datagram: Datagram): Promise<Uint8Array> {
         const userId = datagram.sender;
-        const session = this.sessions.get(userId);
+        const session = await this.sessions.get(userId);
         if (!session)
             throw new Error("Session not found for user: " + userId);
         if (!datagram.payload)
@@ -108,5 +104,39 @@ export class FreeSignalNode {
         }
 
     }
+}
 
+class SessionMap implements LocalStorage<string, KeySession> {
+    private readonly cache = new Map<string, KeySession>()
+
+    public constructor(public readonly storage: LocalStorage<string, ExportedKeySession>, public readonly maxSize = 50) { }
+
+    public set(key: string, value: KeySession): Promise<void> {
+        this.cache.set(key, value);
+        return this.storage.set(key, value.toJSON());
+    }
+
+    public async get(key: string): Promise<KeySession | undefined> {
+        const session = this.cache.get(key);
+        if (!session) {
+            const sessionData = await this.storage.get(key);
+            if (!sessionData)
+                return undefined;
+            return KeySession.from(sessionData, this.storage);
+        }
+        return session;
+    }
+
+    public async has(key: string): Promise<boolean> {
+        return this.cache.has(key) || await this.storage.has(key);
+    }
+
+    public async delete(key: string): Promise<boolean> {
+        return this.cache.delete(key) || await this.storage.delete(key);
+    }
+
+    public clear(): Promise<void> {
+        this.cache.clear();
+        return this.storage.clear();
+    }
 }

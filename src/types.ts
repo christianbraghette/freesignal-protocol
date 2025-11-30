@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { concatArrays, decodeBase64, decodeJSON, decodeUTF8, encodeBase64, encodeJSON, encodeUTF8, numberFromArray, numberToArray } from "@freesignal/utils";
+import { concatArrays, decodeBase64, encodeBase64, numberFromArray, numberToArray } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import { LocalStorage, Encodable } from "@freesignal/interfaces";
 import { EncryptedDataConstructor } from "./double-ratchet";
@@ -42,7 +42,7 @@ export class UserId {
             identityKey = encodeBase64(identityKey);
         else if (IdentityKey.isIdentityKeys(identityKey))
             identityKey = (identityKey as IdentityKey).toBytes();
-        return new UserId(crypto.hash(identityKey as Uint8Array));
+        return new UserId(crypto.hkdf(identityKey as Uint8Array, new Uint8Array(32).fill(0), "/freesignal/userid"));
     }
 
     public static from(userId: string | Uint8Array | UserId): UserId {

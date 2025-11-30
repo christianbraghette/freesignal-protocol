@@ -21,17 +21,15 @@ import crypto from "@freesignal/crypto";
 import { Crypto, LocalStorage } from "@freesignal/interfaces";
 import { concatArrays, decodeBase64, encodeBase64, numberFromArray, numberToArray, verifyArrays } from "@freesignal/utils";
 import { EncryptedData } from "./types";
+import { AsyncMutex } from "semaphore.ts";
 
 export interface ExportedKeySession {
     secretKey: string;
-    remoteKey: string;
-    rootKey: string;
-    sendingChain: string;
-    receivingChain: string;
-    sendingCount: number;
-    receivingCount: number;
-    previousCount: number;
-    previousKeys: [number, Uint8Array][];
+    //remoteKey?: string;
+    rootKey?: string;
+    sendingChain?: ExportedKeyChain;
+    receivingChain?: ExportedKeyChain;
+    previousKeys: [string, Uint8Array][];
 }
 
 /**
@@ -39,89 +37,41 @@ export interface ExportedKeySession {
  * Used for forward-secure encryption and decryption of messages.
  */
 export class KeySession {
-    private static readonly skipLimit = 1000;
+    public static readonly keyLength = 32;
     public static readonly version = 1;
-    public static readonly rootKeyLength = crypto.box.keyLength;
-
+    public static readonly info = "/freesignal/double-ratchet/v0." + KeySession.version;
+    
     public readonly id: string;
 
-    private keyPair: Crypto.KeyPair;
-    private _remoteKey?: Uint8Array;
-    private rootKey?: Uint8Array;
-    private sendingChain?: Uint8Array;
-    private sendingCount = 0;
-    private previousCount = 0;
-    private receivingChain?: Uint8Array;
-    private receivingCount = 0;
-    private previousKeys = new KeyMap<number, Uint8Array>();
-
+    private readonly mutex = new AsyncMutex();
     private readonly storage: LocalStorage<string, ExportedKeySession>;
+    private keyPair: Crypto.KeyPair;
+    private rootKey?: Uint8Array;
+    private sendingChain?: KeyChain;
+    private receivingChain?: KeyChain;
+    private previousKeys = new KeyMap<string, Uint8Array>();
 
     public constructor(storage: LocalStorage<string, ExportedKeySession>, opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array } = {}) {
         this.id = opts.id ?? crypto.UUID.generate().toString();
         this.keyPair = crypto.ECDH.keyPair(opts.secretKey);
         if (opts.rootKey)
             this.rootKey = opts.rootKey;
+
         if (opts.remoteKey) {
-            this._remoteKey = opts.remoteKey;
-            this.sendingChain = this.ratchetKeys();
+            this.sendingChain = this.getChain(opts.remoteKey);
         }
+
         this.storage = storage;
-        this.storage.set(this.id, this.toJSON());
+        this.save();
     }
 
-    /**
-     * Whether both the sending and receiving chains are initialized.
-     */
-    public get handshaked(): boolean { return this.sendingChain && this.receivingChain ? true : false; }
-
-    /**
-     * The public key of this session.
-     */
-    public get publicKey(): Uint8Array { return this.keyPair.publicKey; }
-
-    /**
-     * The last known remote public key.
-     */
-    public get remoteKey(): Uint8Array | undefined { return this._remoteKey; }
-
-    private setRemoteKey(key: Uint8Array): this {
-        this._remoteKey = key;
-        this.receivingChain = this.ratchetKeys();
-        if (this.receivingCount > (EncryptedDataConstructor.maxCount - KeySession.skipLimit * 2))
-            this.receivingCount = 0;
-        this.previousCount = this.sendingCount;
-        this.keyPair = crypto.ECDH.keyPair();
-        this.sendingChain = this.ratchetKeys();
-        if (this.sendingCount > (EncryptedDataConstructor.maxCount - KeySession.skipLimit * 2))
-            this.sendingCount = 0;
-        return this;
-    }
-
-    private ratchetKeys(info?: Uint8Array): Uint8Array {
-        if (!this._remoteKey) throw new Error();
-        const sharedKey = crypto.ECDH.scalarMult(this.keyPair.secretKey, this._remoteKey);
+    private getChain(remoteKey: Uint8Array, previousCount?: number): KeyChain {
+        const sharedKey = crypto.ECDH.scalarMult(this.keyPair.secretKey, remoteKey);
         if (!this.rootKey)
             this.rootKey = crypto.hash(sharedKey);
-        const hashkey = crypto.hkdf(sharedKey, this.rootKey, info, KeySession.keyLength * 2);
-        this.rootKey = hashkey.slice(0, KeySession.keyLength);
-        return hashkey.slice(KeySession.keyLength);
-    }
-
-    private getSendingKey() {
-        if (!this.sendingChain) throw new Error;
-        const { chainKey, sharedKey } = KeySession.symmetricRatchet(this.sendingChain);
-        this.sendingChain = chainKey;
-        this.sendingCount++;
-        return sharedKey;
-    }
-
-    private getReceivingKey() {
-        if (!this.receivingChain) throw new Error();
-        const { chainKey, sharedKey } = KeySession.symmetricRatchet(this.receivingChain);
-        this.receivingChain = chainKey;
-        this.receivingCount++;
-        return sharedKey;
+        const hashkey = crypto.hkdf(sharedKey, this.rootKey, KeySession.info, KeySession.keyLength * 2);
+        this.rootKey = hashkey.subarray(0, KeySession.keyLength);
+        return new KeyChain(this.publicKey, remoteKey, hashkey.subarray(KeySession.keyLength), previousCount);
     }
 
     private save(): Promise<void> {
@@ -135,13 +85,14 @@ export class KeySession {
      * @returns An EncryptedPayload or undefined if encryption fails.
      */
     public async encrypt(message: Uint8Array): Promise<EncryptedData> {
-        const key = this.getSendingKey();
-        if (this.sendingCount >= EncryptedDataConstructor.maxCount || this.previousCount >= EncryptedDataConstructor.maxCount)
-            throw new Error();
+        using lock = await this.mutex.acquire();
+        if (!this.sendingChain)
+            throw new Error("SendingChain not initialized");
+        const key = this.sendingChain.getKey();
         const nonce = crypto.randomBytes(EncryptedDataConstructor.nonceLength);
         const ciphertext = crypto.box.encrypt(message, nonce, key);
         await this.save();
-        return new EncryptedDataConstructor(this.sendingCount, this.previousCount, this.keyPair.publicKey, nonce, ciphertext);
+        return new EncryptedDataConstructor(this.sendingChain.count, this.sendingChain.previousCount, this.keyPair.publicKey, nonce, ciphertext);
     }
 
     /**
@@ -150,44 +101,61 @@ export class KeySession {
      * @param payload - The received encrypted message.
      * @returns The decrypted message as a Uint8Array, or undefined if decryption fails.
      */
-    public async decrypt(payload: Uint8Array | EncryptedData): Promise<Uint8Array | undefined> {
+    public async decrypt(payload: Uint8Array | EncryptedData): Promise<Uint8Array> {
+        using lock = await this.mutex.acquire();
         const encrypted = EncryptedData.from(payload);
-        const publicKey = encrypted.publicKey;
-        if (this._remoteKey && !verifyArrays(publicKey, this._remoteKey))
-            while (this.receivingCount < encrypted.previous)
-                this.previousKeys.set(this.receivingCount, this.getReceivingKey());
-        this.setRemoteKey(publicKey);
-        let key: Uint8Array | undefined;
-        const count = encrypted.count;
-        if (this.receivingCount < count) {
-            let i = 0;
-            while (this.receivingCount < count - 1 && i < KeySession.skipLimit) {
-                this.previousKeys.set(this.receivingCount, this.getReceivingKey());
-            }
-            key = this.getReceivingKey()
-        } else {
-            key = this.previousKeys.get(count);
-        }
-        if (!key)
-            return undefined;
 
+        if (!verifyArrays(encrypted.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
+
+            while (this.receivingChain && this.receivingChain.count < encrypted.previous) {
+                const key = this.receivingChain.getKey();
+                this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
+            }
+
+            this.receivingChain = this.getChain(encrypted.publicKey);
+            this.keyPair = crypto.ECDH.keyPair();
+            this.sendingChain = this.getChain(encrypted.publicKey, this.sendingChain?.count);
+        }
+
+        if (!this.receivingChain)
+            throw new Error("Error initializing receivingChain");
+
+        while (this.receivingChain.count < encrypted.count) {
+            const key = this.receivingChain.getKey();
+            this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
+        }
+
+        const key = this.previousKeys.get(decodeBase64(encrypted.publicKey) + encrypted.count.toString());
+        if (!key)
+            throw new Error("Error calculating key");
         await this.save();
-        return crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key);
+
+        const cleartext = crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key);
+        if (!cleartext)
+            throw new Error("Error decrypting ciphertext");
+
+        return cleartext;
     }
+
+    /**
+     * Whether both the sending and receiving chains are initialized.
+     */
+    public get handshaked(): boolean { return this.sendingChain && this.receivingChain ? true : false; }
+
+    /**
+     * The public key of this session.
+     */
+    public get publicKey(): Uint8Array { return this.keyPair.publicKey; }
 
     /**
      * Export the state of the session;
      */
     public toJSON(): ExportedKeySession {
         return {
-            secretKey: decodeBase64(concatArrays(this.keyPair.secretKey)),
-            remoteKey: decodeBase64(this._remoteKey ?? new Uint8Array()),
-            rootKey: decodeBase64(this.rootKey ?? new Uint8Array()),
-            sendingChain: decodeBase64(this.sendingChain ?? new Uint8Array()),
-            receivingChain: decodeBase64(this.receivingChain ?? new Uint8Array()),
-            sendingCount: this.sendingCount,
-            receivingCount: this.receivingCount,
-            previousCount: this.previousCount,
+            secretKey: decodeBase64(this.keyPair.secretKey),
+            rootKey: this.rootKey ? decodeBase64(this.rootKey) : undefined,
+            sendingChain: this.sendingChain?.toJSON(),
+            receivingChain: this.receivingChain?.toJSON(),
             previousKeys: Array.from(this.previousKeys.entries())
         };
     }
@@ -199,30 +167,59 @@ export class KeySession {
      * @returns session with the state parsed.
      */
     public static from(data: ExportedKeySession, storage: LocalStorage<string, ExportedKeySession>): KeySession {
-        const session = new KeySession(storage, { secretKey: encodeBase64(data.secretKey), rootKey: encodeBase64(data.rootKey) });
-        session._remoteKey = encodeBase64(data.remoteKey);
-        session.sendingChain = encodeBase64(data.sendingChain);
-        session.receivingChain = encodeBase64(data.receivingChain);
-        session.sendingCount = data.sendingCount;
-        session.receivingCount = data.receivingCount;
-        session.previousCount = data.previousCount;
+        const session = new KeySession(storage, { secretKey: encodeBase64(data.secretKey), rootKey: data.rootKey ? encodeBase64(data.rootKey) : undefined });
+        //session._remoteKey = data.remoteKey ? encodeBase64(data.remoteKey) : undefined;
+        session.sendingChain = data.sendingChain ? KeyChain.from(data.sendingChain) : undefined;
+        session.receivingChain = data.receivingChain ? KeyChain.from(data.receivingChain) : undefined;
         session.previousKeys = new KeyMap(data.previousKeys);
         session.save();
         return session;
     }
+}
 
-    /**
-     * The fixed key length (in bytes) used throughout the Double Ratchet session.
-     * Typically 32 bytes (256 bits) for symmetric keys.
-     */
-    public static readonly keyLength = 32;
+interface ExportedKeyChain {
+    publicKey: string;
+    remoteKey: string;
+    chainKey: string;
+    count: number;
+    previousCount: number
+}
 
-    private static symmetricRatchet(chain: Uint8Array, salt?: Uint8Array, info?: Uint8Array) {
-        const hash = crypto.hkdf(chain, salt ?? new Uint8Array(), info, KeySession.keyLength * 2);
+class KeyChain {
+    private _count: number = 0;
+
+    public constructor(public readonly publicKey: Uint8Array, public readonly remoteKey: Uint8Array, private chainKey: Uint8Array, public readonly previousCount: number = 0) { }
+
+    public getKey(): Uint8Array {
+        if (++this._count >= EncryptedDataConstructor.maxCount)
+            throw new Error("SendingChain count too big");
+        const hash = crypto.hkdf(this.chainKey, new Uint8Array(KeySession.keyLength).fill(0), KeySession.info, KeySession.keyLength * 2);
+        this.chainKey = hash.subarray(0, KeySession.keyLength);
+        return hash.subarray(KeySession.keyLength);
+    }
+
+    public toString(): string {
+        return "[object KeyChain]";
+    }
+
+    public get count(): number {
+        return this._count;
+    }
+
+    public toJSON(): ExportedKeyChain {
         return {
-            chainKey: new Uint8Array(hash.buffer, 0, KeySession.keyLength),
-            sharedKey: new Uint8Array(hash.buffer, KeySession.keyLength)
+            publicKey: decodeBase64(this.publicKey),
+            remoteKey: decodeBase64(this.remoteKey),
+            chainKey: decodeBase64(this.chainKey),
+            count: this.count,
+            previousCount: this.previousCount
         }
+    }
+
+    public static from(obj: ExportedKeyChain): KeyChain {
+        const chain = new KeyChain(encodeBase64(obj.publicKey), encodeBase64(obj.remoteKey), encodeBase64(obj.chainKey), obj.previousCount);
+        chain._count = obj.count;
+        return chain;
     }
 }
 
