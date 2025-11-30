@@ -18,7 +18,7 @@
  */
 
 import crypto from "@freesignal/crypto";
-import { LocalStorage, Crypto, Database } from "@freesignal/interfaces";
+import { LocalStorage, Crypto, Database, KeyExchangeDataBundle } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 import { IdentityKey, PrivateIdentityKey } from "./types";
@@ -67,6 +67,7 @@ export function createNode(storage: Database<{
     sessions: LocalStorage<string, ExportedKeySession>;
     keyExchange: LocalStorage<string, Crypto.KeyPair>;
     users: LocalStorage<string, IdentityKey>;
+    bundles: LocalStorage<string, KeyExchangeDataBundle>;
 }>, privateIdentityKey?: PrivateIdentityKey): FreeSignalNode {
     return new FreeSignalNode(storage, privateIdentityKey);
 }

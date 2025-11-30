@@ -70,7 +70,7 @@ export class KeyExchange {
             identityKey: this.identityKey.toString(),
             signedPreKey: decodeBase64(signedPreKey.publicKey),
             signature: decodeBase64(crypto.EdDSA.sign(signedPreKeyHash, this.privateIdentityKey.signatureKey)),
-            onetimePreKey: onetimePreKey.map(opk => decodeBase64(opk.publicKey))
+            onetimePreKeys: onetimePreKey.map(opk => decodeBase64(opk.publicKey))
         }
     }
 

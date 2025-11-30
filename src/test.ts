@@ -1,52 +1,32 @@
-import { decodeData, encodeData } from "@freesignal/utils";
+import { decodeBase64, decodeData, encodeData } from "@freesignal/utils";
 import { AsyncMap, createNode } from ".";
-import { KeyExchange } from "./x3dh";
+import crypto from "@freesignal/crypto";
 
-const bob = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap() });
-const alice = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap() });
+const bob = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap() });
+const alice = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap() });
 
 setImmediate(async () => {
-    const aliceHandshake = await alice.sendHandshake(await bob.generateKeyData());
-    await bob.receive<void>(aliceHandshake);
+    const aliceHandshake = await alice.packHandshake(await bob.generateKeyExchangeData());
 
-    console.log("Session established successfully between Alice and Bob.");
+    console.log(aliceHandshake.toJSON());
 
-    const first = (await bob.sendData(alice.userId.toString(), encodeData("Hi Alice!"))).toBytes();
+    await bob.open<void>(aliceHandshake);
+    const first = (await bob.packData(alice.userId, encodeData("Hi Alice!"))).toBytes();
 
-    console.log("Bob: ", decodeData<string>(await alice.receive(first)));
+    console.log("Bob: ", decodeData<string>(await alice.open(first)));
+    const second = await alice.packData(bob.userId, encodeData("Hi Bob!"));
 
-    const second = await alice.sendData(bob.userId.toString(), encodeData("Hi Bob!"));
+    console.log("Alice: ", decodeData<string>(await bob.open(second)));
+    const third = await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bob.packData(alice.userId, encodeData(msg))));
 
-    console.log("Alice: ", decodeData<string>(await bob.receive(second)));
-
-    const third = await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bob.sendData(alice.userId.toString(), encodeData(msg))));
-
-    third.forEach(async value => {
-        console.log("Bob: ", decodeData<string>(await alice.receive(value)));
+    third.forEach(async data => {
+        console.log("Bob: ", decodeData<string>(await alice.open(data)));
     });
+    const fourth = await alice.packData(bob.userId, encodeData("Not so bad my man"));
+
+    console.log("Alice: ", decodeData<string>(await bob.open(fourth)));
+
+    const testone = await Promise.all(Array(2699).fill(0).map(() => alice.packData(bob.userId, decodeBase64(crypto.randomBytes(64)))));
+    console.log(testone[2000].toJSON());
+    console.log((await bob.open<Uint8Array>(testone[2000])).length);
 });
-
-/*const bob = new KeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() });
-const alice = new KeyExchange({ keys: new AsyncMap(), sessions: new AsyncMap() });
-
-setImmediate(async () => {
-    const { session: aliceSession, message, identityKey: bobIK } = await alice.digestData(await bob.generateData());
-    const { session: bobSession, identityKey: aliceIK } = await bob.digestMessage(message);
-
-    const first = await aliceSession.encrypt(encodeData("Testing"));
-
-    console.log("Alice: ", decodeData<string>(await bobSession.decrypt(first)));
-
-    const second = await bobSession.encrypt(encodeData("Sucker"));
-
-    console.log("Bob: ", decodeData<string>(await aliceSession.decrypt(second)));
-
-    console.log("Handshaked: ", aliceSession.handshaked && bobSession.handshaked);
-
-    const third = await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bobSession.encrypt(encodeData(msg))));
-    
-    console.log(decodeData<string>(await aliceSession.decrypt(third[1])));
-    console.log(decodeData<string>(await aliceSession.decrypt(third[0])));
-    console.log(decodeData<string>(await aliceSession.decrypt(third[2])));
-
-});*/

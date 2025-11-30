@@ -25,7 +25,6 @@ import { AsyncMutex } from "semaphore.ts";
 
 export interface ExportedKeySession {
     secretKey: string;
-    //remoteKey?: string;
     rootKey?: string;
     sendingChain?: ExportedKeyChain;
     receivingChain?: ExportedKeyChain;

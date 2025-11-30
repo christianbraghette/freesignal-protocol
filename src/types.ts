@@ -19,7 +19,7 @@
 
 import { concatArrays, decodeBase64, encodeBase64, numberFromArray, numberToArray } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
-import { LocalStorage, Encodable } from "@freesignal/interfaces";
+import { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptedDataConstructor } from "./double-ratchet";
 
 export class UserId {
@@ -188,6 +188,17 @@ export namespace PrivateIdentityKey {
     }
 }
 
+export enum DiscoverType {
+    REQUEST, 
+    RESPONSE
+}
+
+export interface DiscoverMessage {
+    type: DiscoverType,
+    discoverId?: string,
+    data?: KeyExchangeData
+}
+
 export enum Protocols {
     NULL = '',
     MESSAGE = '/freesignal/message',
@@ -218,6 +229,21 @@ export namespace Protocols {
     }
 }
 
+interface DatagramJSON {
+    id: string;
+    version: number;
+    sender: string;
+    receiver: string;
+    protocol: Protocols;
+    createdAt: number;
+    payload: string | undefined;
+    signature: string | undefined;
+};
+
+export interface SignedDatagram extends Datagram {
+    signature: string;
+}
+
 export class Datagram implements Encodable {
     public static version = 1;
 
@@ -227,10 +253,8 @@ export class Datagram implements Encodable {
     public readonly receiver: string;
     public readonly protocol: Protocols;
     private _createdAt: number;
-
     private _payload?: Uint8Array;
     private _signature?: Uint8Array;
-    private secretKey?: Uint8Array;
 
     private static headerOffset = 26 + crypto.EdDSA.publicKeyLength * 2;
 
@@ -256,18 +280,6 @@ export class Datagram implements Encodable {
         return this._createdAt;
     }
 
-    public get signed(): boolean {
-        return !!this._signature || !!this.secretKey;
-    }
-
-    public get signature(): string | undefined {
-        if (this.signed) {
-            if (!this._signature)
-                this.toBytes();
-            return decodeBase64(this._signature!);
-        }
-    }
-
     public set payload(data: Uint8Array) {
         this._signature = undefined;
         this._payload = data;
@@ -277,31 +289,54 @@ export class Datagram implements Encodable {
         return this._payload;
     }
 
+    public get signature(): string | undefined {
+        return this._signature ? decodeBase64(this._signature) : undefined;
+    }
+
     public toBytes(): Uint8Array {
-        const data = concatArrays(
-            new Uint8Array(1).fill(this.version | (this.secretKey ? 128 : 0)), //1
+        return concatArrays(
+            new Uint8Array(1).fill(this.version | (this.signature ? 128 : 0)), //1
             Protocols.encode(this.protocol), //1
             crypto.UUID.parse(this.id) ?? [], //16
             numberToArray(this.createdAt, 8), //8
             encodeBase64(this.sender), //32
             encodeBase64(this.receiver), //32
-            this._payload ?? new Uint8Array()
+            this._payload ?? new Uint8Array(),
+            this._signature ?? new Uint8Array()
         );
-        if (this.secretKey) this._signature = crypto.EdDSA.sign(data, this.secretKey);
-        return concatArrays(data, this._signature ?? new Uint8Array());
     }
 
-    public sign(secretKey: Uint8Array): this {
-        this.secretKey = secretKey;
-        return this
+    public sign(secretKey: Uint8Array): SignedDatagram {
+        this._signature = crypto.EdDSA.sign(this.toBytes(), secretKey);
+        return this as SignedDatagram;
     }
 
     public toString(): string {
         return decodeBase64(this.toBytes());
     }
 
-    public toJSON(): string {
-        return this.toString();
+    public toJSON(): DatagramJSON {
+        return {
+            id: this.id,
+            version: this.version,
+            sender: this.sender,
+            receiver: this.receiver,
+            protocol: this.protocol,
+            createdAt: this.createdAt,
+            payload: this.payload ? decodeBase64(this.payload) : undefined,
+            signature: this._signature ? decodeBase64(this._signature) : undefined
+        };
+    }
+
+    public static verify(datagram: Datagram, publicKey: Uint8Array) {
+        const data = datagram.toBytes();
+        if (!datagram.signature)
+            throw new Error("Datagram not signed");
+        return crypto.EdDSA.verify(
+            data.subarray(0, data.length - crypto.EdDSA.signatureLength),
+            data.subarray(data.length - crypto.EdDSA.signatureLength),
+            publicKey
+        );
     }
 
     public static from(data: Uint8Array | Datagram | string): Datagram {
@@ -312,7 +347,7 @@ export class Datagram implements Encodable {
                 decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength)),
                 decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, Datagram.headerOffset)),
                 Protocols.decode(data.subarray(1, 2)),
-                data.subarray(Datagram.headerOffset, data.length)
+                data.subarray(Datagram.headerOffset, data.length - (data[0] & 128 ? crypto.EdDSA.signatureLength : 0))
             );
             datagram._version = data[0] & 127;
             datagram._id = crypto.UUID.stringify(data.subarray(2, 18));
