@@ -3,7 +3,7 @@ import { Datagram, DiscoverMessage, DiscoverType, IdentityKey, PrivateIdentityKe
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
-import { decodeData, encodeData, encodeJSON } from "@freesignal/utils";
+import { decodeData, encodeData } from "@freesignal/utils";
 
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
@@ -99,10 +99,11 @@ export class FreeSignalNode {
                 const data = decodeData<KeyExchangeSynMessage>(datagram.payload);
                 if (!Datagram.verify(datagram, IdentityKey.from(data.identityKey).signatureKey))
                     throw new Error("Signature not verified");
-                const { session, identityKey } = await this.keyExchange.digestMessage(data);
+                const { session, identityKey, bundle } = await this.keyExchange.digestMessage(data);
                 const userId = UserId.fromKey(identityKey);
                 await this.users.set(userId.toString(), identityKey);
                 await this.sessions.set(userId.toString(), session);
+                await this.bundles.set(userId.toString(), bundle);
                 return;
 
             case Protocols.MESSAGE:

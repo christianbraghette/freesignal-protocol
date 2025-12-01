@@ -1,6 +1,8 @@
-import { decodeBase64, decodeData, encodeData, numberToArray, } from "@freesignal/utils";
+import { decodeBase64 } from "@freesignal/utils";
 import { AsyncMap, createNode } from ".";
 import crypto from "@freesignal/crypto";
+
+console.log("FreeSignal protocol test");
 
 const bob = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap() });
 const alice = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap() });
@@ -24,7 +26,6 @@ setImmediate(async () => {
 
     console.log("Alice: ", await bob.open(fourth));
 
-    //const testone = await Promise.all(Array(2699).fill(0).map(() => alice.packData(bob.userId, decodeBase64(crypto.randomBytes(64)))));
-
-    //console.log((await bob.open<Uint8Array>(testone[2000])));
+    const testone = await Promise.all(Array(400).fill(0).map(() => alice.packData(bob.userId, decodeBase64(crypto.randomBytes(64)))));
+    console.log((await bob.open<Uint8Array>(testone[350])));
 });

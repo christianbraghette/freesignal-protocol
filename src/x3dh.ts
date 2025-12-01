@@ -20,7 +20,7 @@
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
-import { concatArrays, decodeBase64, encodeBase64, verifyArrays } from "@freesignal/utils";
+import { concatArrays, decodeBase64, decodeData, encodeBase64, encodeData, verifyArrays } from "@freesignal/utils";
 import { IdentityKey, PrivateIdentityKey } from "./types";
 import { createIdentity } from ".";
 
@@ -102,7 +102,7 @@ export class KeyExchange {
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
         const session = new KeySession(this.sessions, { remoteKey: identityKey.exchangeKey, rootKey });
-        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes())));
+        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), encodeData(await this.generateBundle())));
         if (!cyphertext) throw new Error("Decryption error");
 
         return {
@@ -119,7 +119,7 @@ export class KeyExchange {
         }
     }
 
-    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, identityKey: IdentityKey }> {
+    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, identityKey: IdentityKey, bundle: KeyExchangeDataBundle }> {
         const signedPreKey = await this.storage.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
         const onetimePreKey = await this.storage.get(hash);
@@ -135,12 +135,14 @@ export class KeyExchange {
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
         const session = new KeySession(this.sessions, { secretKey: this.privateIdentityKey.exchangeKey, rootKey })
         const cleartext = await session.decrypt(encodeBase64(message.associatedData));
-        if (!cleartext) throw new Error("Error decrypting ACK message");
-        if (!verifyArrays(cleartext, concatArrays(crypto.hash(identityKey.toBytes()), crypto.hash(this.identityKey.toBytes()))))
+        if (!cleartext)
+            throw new Error("Error decrypting ACK message");
+        if (!verifyArrays(cleartext.subarray(0, 64), concatArrays(crypto.hash(identityKey.toBytes()), crypto.hash(this.identityKey.toBytes()))))
             throw new Error("Error verifing Associated Data");
         return {
             session,
-            identityKey
+            identityKey,
+            bundle: decodeData(cleartext.subarray(64))
         };
     }
 }
