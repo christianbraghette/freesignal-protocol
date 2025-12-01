@@ -3,7 +3,7 @@ import { Datagram, DiscoverMessage, DiscoverType, IdentityKey, PrivateIdentityKe
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
-import { decodeData, encodeData } from "@freesignal/utils";
+import { decodeData, encodeData, encodeJSON } from "@freesignal/utils";
 
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
@@ -26,12 +26,12 @@ export class FreeSignalNode {
         this.bundles = storage.bundles;
     }
 
-    public get userId(): UserId {
-        return UserId.fromKey(this.privateIdentityKey.identityKey);
-    }
-
     public get identityKey(): IdentityKey {
         return this.privateIdentityKey.identityKey;
+    }
+
+    public get userId(): UserId {
+        return UserId.fromKey(this.identityKey);
     }
 
     public generateKeyExchangeData(): Promise<KeyExchangeData> {
@@ -97,6 +97,8 @@ export class FreeSignalNode {
                 if (!datagram.payload)
                     throw new Error("Missing payload");
                 const data = decodeData<KeyExchangeSynMessage>(datagram.payload);
+                if (!Datagram.verify(datagram, IdentityKey.from(data.identityKey).signatureKey))
+                    throw new Error("Signature not verified");
                 const { session, identityKey } = await this.keyExchange.digestMessage(data);
                 const userId = UserId.fromKey(identityKey);
                 await this.users.set(userId.toString(), identityKey);
@@ -104,7 +106,7 @@ export class FreeSignalNode {
                 return;
 
             case Protocols.MESSAGE:
-                return await this.decrypt(datagram);
+                return decodeData(await this.decrypt(datagram));
 
             case Protocols.RELAY:
                 return decodeData<Datagram>(await this.decrypt(datagram));

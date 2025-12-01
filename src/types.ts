@@ -88,7 +88,7 @@ export namespace IdentityKey {
         }
 
         toBytes(): Uint8Array {
-            return concatArrays(numberToArray(this.info), this.signatureKey, this.exchangeKey);
+            return concatArrays(numberToArray(this.info, 1), this.signatureKey, this.exchangeKey);
         }
 
         toString(): string {
@@ -115,7 +115,7 @@ export namespace IdentityKey {
             else
                 return key as Uint8Array;
         });
-        return new IdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version), ...keys as Uint8Array[]) : keys[0]);
+        return new IdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
     }
 }
 
@@ -131,13 +131,14 @@ export namespace PrivateIdentityKey {
     export const version = 1;
 
     class PrivateIdentityKeyConstructor implements PrivateIdentityKey, Encodable {
-        public readonly info: number = info + version;
+        public readonly info: number;
         public readonly signatureKey: Uint8Array;
         public readonly exchangeKey: Uint8Array;
         public readonly identityKey: IdentityKey;
 
         constructor(privateIdentityKey: PrivateIdentityKey | Uint8Array | string) {
             if (privateIdentityKey instanceof PrivateIdentityKeyConstructor) {
+                this.info = privateIdentityKey.info;
                 this.signatureKey = privateIdentityKey.signatureKey;
                 this.exchangeKey = privateIdentityKey.exchangeKey;
                 this.identityKey = privateIdentityKey.identityKey;
@@ -146,6 +147,7 @@ export namespace PrivateIdentityKey {
                     privateIdentityKey = encodeBase64(privateIdentityKey);
                 if (!isIdentityKeys(privateIdentityKey))
                     throw new Error("Invalid key length");
+                this.info = (privateIdentityKey as Uint8Array)[0];
                 this.signatureKey = (privateIdentityKey as Uint8Array).subarray(1, crypto.EdDSA.secretKeyLength + 1);
                 this.exchangeKey = (privateIdentityKey as Uint8Array).subarray(crypto.EdDSA.secretKeyLength + 1, keyLength);
                 this.identityKey = IdentityKey.from(crypto.EdDSA.keyPair(this.signatureKey).publicKey, crypto.ECDH.keyPair(this.exchangeKey).publicKey);
@@ -157,7 +159,7 @@ export namespace PrivateIdentityKey {
         }
 
         toBytes(): Uint8Array {
-            return concatArrays(numberToArray(this.info), this.signatureKey, this.exchangeKey);
+            return concatArrays(numberToArray(this.info, 1), this.signatureKey, this.exchangeKey);
         }
 
         toString(): string {
@@ -184,12 +186,12 @@ export namespace PrivateIdentityKey {
             else
                 return key as Uint8Array;
         });
-        return new PrivateIdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version), ...keys as Uint8Array[]) : keys[0]);
+        return new PrivateIdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
     }
 }
 
 export enum DiscoverType {
-    REQUEST, 
+    REQUEST,
     RESPONSE
 }
 
@@ -220,7 +222,7 @@ export namespace Protocols {
         return Object.values(Protocols).indexOf(protocol);
     }
 
-    export function encode(protocol: Protocols, length?: number): Uint8Array {
+    export function encode(protocol: Protocols, length: number = 1): Uint8Array {
         return numberToArray(Protocols.toCode(protocol), length);
     }
 
@@ -293,12 +295,18 @@ export class Datagram implements Encodable {
         return this._signature ? decodeBase64(this._signature) : undefined;
     }
 
+    private get unsigned() {
+        const data = this.toBytes();
+        data[0] &= 127;
+        return data.subarray(0, data.length - (this._signature ? crypto.EdDSA.signatureLength : 0));
+    }
+
     public toBytes(): Uint8Array {
         return concatArrays(
             new Uint8Array(1).fill(this.version | (this.signature ? 128 : 0)), //1
             Protocols.encode(this.protocol), //1
             crypto.UUID.parse(this.id) ?? [], //16
-            numberToArray(this.createdAt, 8), //8
+            new Uint8Array(numberToArray(this._createdAt, 8)), //8
             encodeBase64(this.sender), //32
             encodeBase64(this.receiver), //32
             this._payload ?? new Uint8Array(),
@@ -307,7 +315,7 @@ export class Datagram implements Encodable {
     }
 
     public sign(secretKey: Uint8Array): SignedDatagram {
-        this._signature = crypto.EdDSA.sign(this.toBytes(), secretKey);
+        this._signature = crypto.EdDSA.sign(this.unsigned, secretKey);
         return this as SignedDatagram;
     }
 
@@ -329,12 +337,11 @@ export class Datagram implements Encodable {
     }
 
     public static verify(datagram: Datagram, publicKey: Uint8Array) {
-        const data = datagram.toBytes();
-        if (!datagram.signature)
+        if (!datagram._signature)
             throw new Error("Datagram not signed");
         return crypto.EdDSA.verify(
-            data.subarray(0, data.length - crypto.EdDSA.signatureLength),
-            data.subarray(data.length - crypto.EdDSA.signatureLength),
+            datagram.unsigned,
+            datagram._signature,
             publicKey
         );
     }
@@ -359,8 +366,8 @@ export class Datagram implements Encodable {
             const datagram = new Datagram(data.sender, data.receiver, data.protocol, data.payload);
             datagram._id = datagram.id;
             datagram._version = datagram.version;
-            datagram._createdAt = datagram.createdAt;
-            datagram._signature = datagram.signature ? encodeBase64(datagram.signature) : undefined;
+            datagram._createdAt = datagram._createdAt;
+            datagram._signature = datagram._signature;
             return datagram;
         } else
             throw new Error('Invalid constructor arguments for Datagram');

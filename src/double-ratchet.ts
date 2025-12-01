@@ -245,10 +245,10 @@ export class EncryptedDataConstructor implements EncryptedData {
         if (typeof arrays[1] === 'number')
             arrays[1] = numberToArray(arrays[1], EncryptedDataConstructor.countLength);
         if (arrays.length === 6) {
-            arrays.unshift(typeof arrays[5] === 'number' ? numberToArray(arrays[5]) : arrays[5]);
+            arrays.unshift(typeof arrays[5] === 'number' ? numberToArray(arrays[5], 1) : arrays[5]);
             arrays.pop();
         } else if (arrays.length > 1) {
-            arrays.unshift(numberToArray(KeySession.version));
+            arrays.unshift(numberToArray(KeySession.version, 1));
         }
         this.raw = concatArrays(...arrays);
     }
