@@ -39,10 +39,10 @@ export class KeySession {
     public static readonly keyLength = 32;
     public static readonly version = 1;
     public static readonly info = "/freesignal/double-ratchet/v0." + KeySession.version;
-    
+
     public readonly id: string;
 
-    private readonly mutex = new AsyncMutex();
+    private readonly mutex: { readonly sending: AsyncMutex, readonly receiving: AsyncMutex } = { sending: new AsyncMutex(), receiving: new AsyncMutex() };
     private readonly storage: LocalStorage<string, ExportedKeySession>;
     private keyPair: Crypto.KeyPair;
     private rootKey?: Uint8Array;
@@ -84,13 +84,13 @@ export class KeySession {
      * @returns An EncryptedPayload or undefined if encryption fails.
      */
     public async encrypt(message: Uint8Array): Promise<EncryptedData> {
-        using lock = await this.mutex.acquire();
+        using lock = await this.mutex.sending.acquire();
         if (!this.sendingChain)
             throw new Error("SendingChain not initialized");
         const key = this.sendingChain.getKey();
         const nonce = crypto.randomBytes(EncryptedDataConstructor.nonceLength);
         const ciphertext = crypto.box.encrypt(message, nonce, key);
-        await this.save();
+        this.save();
         return new EncryptedDataConstructor(this.sendingChain.count, this.sendingChain.previousCount, this.keyPair.publicKey, nonce, ciphertext);
     }
 
@@ -101,33 +101,37 @@ export class KeySession {
      * @returns The decrypted message as a Uint8Array, or undefined if decryption fails.
      */
     public async decrypt(payload: Uint8Array | EncryptedData): Promise<Uint8Array> {
-        using lock = await this.mutex.acquire();
         const encrypted = EncryptedData.from(payload);
 
-        if (!verifyArrays(encrypted.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
+        if (!this.previousKeys.has(decodeBase64(encrypted.publicKey) + encrypted.count.toString())) {
+            const lock = await this.mutex.receiving.acquire();
+            if (!verifyArrays(encrypted.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
 
-            while (this.receivingChain && this.receivingChain.count < encrypted.previous) {
+                while (this.receivingChain && this.receivingChain.count < encrypted.previous) {
+                    const key = this.receivingChain.getKey();
+                    this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
+                }
+
+                this.receivingChain = this.getChain(encrypted.publicKey);
+                this.keyPair = crypto.ECDH.keyPair();
+                this.sendingChain = this.getChain(encrypted.publicKey, this.sendingChain?.count);
+            }
+
+            if (!this.receivingChain)
+                throw new Error("Error initializing receivingChain");
+
+            while (this.receivingChain.count < encrypted.count) {
                 const key = this.receivingChain.getKey();
                 this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
             }
 
-            this.receivingChain = this.getChain(encrypted.publicKey);
-            this.keyPair = crypto.ECDH.keyPair();
-            this.sendingChain = this.getChain(encrypted.publicKey, this.sendingChain?.count);
-        }
-
-        if (!this.receivingChain)
-            throw new Error("Error initializing receivingChain");
-
-        while (this.receivingChain.count < encrypted.count) {
-            const key = this.receivingChain.getKey();
-            this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
+            lock.release();
         }
 
         const key = this.previousKeys.get(decodeBase64(encrypted.publicKey) + encrypted.count.toString());
         if (!key)
             throw new Error("Error calculating key");
-        await this.save();
+        this.save();
 
         const cleartext = crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key);
         if (!cleartext)

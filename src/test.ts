@@ -24,7 +24,7 @@ setImmediate(async () => {
 
     console.log("Alice: ", await bob.open(fourth));
 
-    const testone = await Promise.all(Array(2699).fill(0).map(() => alice.packData(bob.userId, decodeBase64(crypto.randomBytes(64)))));
+    //const testone = await Promise.all(Array(2699).fill(0).map(() => alice.packData(bob.userId, decodeBase64(crypto.randomBytes(64)))));
 
-    console.log((await bob.open<Uint8Array>(testone[2000])));
+    //console.log((await bob.open<Uint8Array>(testone[2000])));
 });
