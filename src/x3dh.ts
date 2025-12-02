@@ -86,7 +86,7 @@ export class KeyExchange {
         }
     }
 
-    public async digestData(message: KeyExchangeData): Promise<{ session: KeySession; message: KeyExchangeSynMessage; identityKey: IdentityKey; }> {
+    public async digestData(message: KeyExchangeData, associatedData?: Uint8Array): Promise<{ session: KeySession; message: KeyExchangeSynMessage; identityKey: IdentityKey; }> {
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = encodeBase64(message.signedPreKey);
         const identityKey = IdentityKey.from(message.identityKey);
@@ -102,8 +102,9 @@ export class KeyExchange {
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
         const session = new KeySession(this.sessions, { remoteKey: identityKey.exchangeKey, rootKey });
-        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), encodeData(await this.generateBundle())));
-        if (!cyphertext) throw new Error("Decryption error");
+        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
+        if (!cyphertext)
+            throw new Error("Decryption error");
 
         return {
             session,
@@ -119,13 +120,15 @@ export class KeyExchange {
         }
     }
 
-    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, identityKey: IdentityKey, bundle: KeyExchangeDataBundle }> {
+    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, identityKey: IdentityKey, associatedData: Uint8Array }> {
         const signedPreKey = await this.storage.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
         const onetimePreKey = await this.storage.get(hash);
         const identityKey = IdentityKey.from(message.identityKey);
-        if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey) throw new Error("ACK message malformed");
-        if (!this.storage.delete(hash)) throw new Error("Bundle store deleting error");
+        if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey)
+            throw new Error("ACK message malformed");
+        if (!this.storage.delete(hash))
+            throw new Error("Bundle store deleting error");
         const ephemeralKey = encodeBase64(message.ephemeralKey);
         const rootKey = crypto.hkdf(new Uint8Array([
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, identityKey.exchangeKey),
@@ -142,7 +145,7 @@ export class KeyExchange {
         return {
             session,
             identityKey,
-            bundle: decodeData(cleartext.subarray(64))
+            associatedData: cleartext.subarray(64)
         };
     }
 }

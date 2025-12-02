@@ -52,7 +52,7 @@ export class FreeSignalNode {
     }
 
     public async packHandshake(data: KeyExchangeData): Promise<Datagram> {
-        const { session, message, identityKey } = await this.keyExchange.digestData(data);
+        const { session, message, identityKey } = await this.keyExchange.digestData(data, encodeData(await this.keyExchange.generateBundle()));
         const remoteId = UserId.fromKey(identityKey);
         await this.users.set(remoteId.toString(), identityKey);
         await this.sessions.set(remoteId.toString(), session);
@@ -99,11 +99,11 @@ export class FreeSignalNode {
                 const data = decodeData<KeyExchangeSynMessage>(datagram.payload);
                 if (!Datagram.verify(datagram, IdentityKey.from(data.identityKey).signatureKey))
                     throw new Error("Signature not verified");
-                const { session, identityKey, bundle } = await this.keyExchange.digestMessage(data);
+                const { session, identityKey, associatedData } = await this.keyExchange.digestMessage(data);
                 const userId = UserId.fromKey(identityKey);
                 await this.users.set(userId.toString(), identityKey);
                 await this.sessions.set(userId.toString(), session);
-                await this.bundles.set(userId.toString(), bundle);
+                await this.bundles.set(userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
                 return;
 
             case Protocols.MESSAGE:
