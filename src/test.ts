@@ -1,7 +1,6 @@
 import { decodeBase64 } from "@freesignal/utils";
-import { AsyncMap, createNode, Datagram } from ".";
+import { AsyncMap, createNode } from ".";
 import crypto from "@freesignal/crypto";
-import { KeyExchangeData } from "@freesignal/interfaces";
 
 console.log("FreeSignal protocol test");
 
@@ -12,7 +11,7 @@ setImmediate(async () => {
     const bobBootstrap = await bob.packBootstrap(alice.userId)
 
     await alice.open(bobBootstrap);
-    const bootstraps = await Promise.all(Array.from(alice.bootstrapRequests.values()).map(request => request.accept()));
+    const bootstraps = await Promise.all(alice.requests.map(request => request.accept()));
     const aliceHandshake = bootstraps.filter(value => value?.receiver === bob.userId.toString())[0];
     if (!aliceHandshake)
         throw new Error("Bootstrap Failed");

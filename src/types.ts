@@ -22,7 +22,7 @@ import crypto from "@freesignal/crypto";
 import { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptedDataConstructor } from "./double-ratchet";
 
-export class UserId {
+export class UserId implements Encodable {
     private constructor(private readonly array: Uint8Array) { };
 
     public toString(): string {
@@ -33,7 +33,7 @@ export class UserId {
         return this.toString();
     }
 
-    public toUint8Array(): Uint8Array {
+    public toBytes(): Uint8Array {
         return this.array;
     }
 

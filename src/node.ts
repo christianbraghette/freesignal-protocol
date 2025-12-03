@@ -3,12 +3,12 @@ import { Datagram, DiscoverMessage, DiscoverType, IdentityKey, PrivateIdentityKe
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
-import { decodeData, encodeData } from "@freesignal/utils";
+import { decodeBase64, decodeData, encodeBase64, encodeData, verifyArrays } from "@freesignal/utils";
 
 class BootstrapRequest {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
 
-    public constructor(public readonly senderId: UserId | string, private readonly acceptFn: () => Promise<Datagram>) { }
+    public constructor(public readonly senderId: UserId | string, public readonly data: KeyExchangeData, private readonly acceptFn: (data: KeyExchangeData) => Promise<Datagram>) { }
 
     public get status() {
         return this.#status;
@@ -18,7 +18,7 @@ class BootstrapRequest {
         if (this.status === 'pending')
             this.#status = 'accepted';
         if (this.#status === 'accepted')
-            return await this.acceptFn();
+            return await this.acceptFn(this.data);
     }
 
     public deny() {
@@ -38,8 +38,7 @@ export class FreeSignalNode {
     protected readonly bundles: LocalStorage<string, KeyExchangeDataBundle>;
     protected readonly keyExchange: KeyExchange;
     protected readonly discovers: Set<string> = new Set();
-
-    public readonly bootstrapRequests: Set<BootstrapRequest> = new Set();
+    protected readonly bootstraps: Set<BootstrapRequest> = new Set();
 
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
@@ -62,13 +61,9 @@ export class FreeSignalNode {
         return UserId.fromKey(this.identityKey);
     }
 
-    /*public generateKeyExchangeData(): Promise<KeyExchangeData> {
-        return this.keyExchange.generateData();
-    };
-
-    public generateKeyExchangeBundle(length?: number): Promise<KeyExchangeDataBundle> {
-        return this.keyExchange.generateBundle(length);
-    };*/
+    public get requests(): BootstrapRequest[] {
+        return Array.from(this.bootstraps.values());
+    }
 
     protected async encrypt(receiverId: string | UserId, protocol: Protocols, data: Uint8Array): Promise<Datagram> {
         if (receiverId instanceof UserId)
@@ -186,8 +181,12 @@ export class FreeSignalNode {
                 return;
 
             case Protocols.BOOTSTRAP:
-                if (datagram.payload)
-                    this.bootstrapRequests.add(new BootstrapRequest(datagram.sender, () => this.packHandshake(decodeData(datagram.payload!))));
+                if (datagram.payload) {
+                    const data = decodeData<KeyExchangeData>(datagram.payload);
+                    if (verifyArrays(UserId.fromKey(data.identityKey).toBytes(), encodeBase64(datagram.sender)))
+                        return;
+                    this.bootstraps.add(new BootstrapRequest(datagram.sender, data, (data) => this.packHandshake(data)))
+                };
                 return;
 
             default:
