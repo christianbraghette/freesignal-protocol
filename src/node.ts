@@ -5,13 +5,41 @@ import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
 import { decodeData, encodeData } from "@freesignal/utils";
 
+class BootstrapRequest {
+    #status: 'pending' | 'accepted' | 'denied' = 'pending';
+
+    public constructor(public readonly senderId: UserId | string, private readonly acceptFn: () => Promise<Datagram>) { }
+
+    public get status() {
+        return this.#status;
+    }
+
+    public async accept(): Promise<Datagram | undefined> {
+        if (this.status === 'pending')
+            this.#status = 'accepted';
+        if (this.#status === 'accepted')
+            return await this.acceptFn();
+    }
+
+    public deny() {
+        if (this.status === 'pending')
+            this.#status = 'denied';
+        return;
+    }
+
+}
+
+type OpenFnReturns = Uint8Array | UserId | Datagram | UserId | KeyExchangeData | undefined | void;
+
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
     protected readonly sessions: SessionMap;
     protected readonly users: LocalStorage<string, IdentityKey>;
     protected readonly bundles: LocalStorage<string, KeyExchangeDataBundle>;
     protected readonly keyExchange: KeyExchange;
-    protected readonly discovers: Set<DiscoverMessage> = new Set();
+    protected readonly discovers: Set<string> = new Set();
+
+    public readonly bootstrapRequests: Set<BootstrapRequest> = new Set();
 
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
@@ -34,13 +62,13 @@ export class FreeSignalNode {
         return UserId.fromKey(this.identityKey);
     }
 
-    public generateKeyExchangeData(): Promise<KeyExchangeData> {
+    /*public generateKeyExchangeData(): Promise<KeyExchangeData> {
         return this.keyExchange.generateData();
     };
 
     public generateKeyExchangeBundle(length?: number): Promise<KeyExchangeDataBundle> {
         return this.keyExchange.generateBundle(length);
-    };
+    };*/
 
     protected async encrypt(receiverId: string | UserId, protocol: Protocols, data: Uint8Array): Promise<Datagram> {
         if (receiverId instanceof UserId)
@@ -67,8 +95,21 @@ export class FreeSignalNode {
         return this.encrypt(receiverId, Protocols.RELAY, encodeData(data));
     }
 
-    public packDiscover(receiverId: string | UserId, message: DiscoverMessage): Promise<Datagram> {
+    public async packDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<Datagram> {
+        if (receiverId instanceof UserId)
+            receiverId = receiverId.toString();
+        if (discoverId instanceof UserId)
+            discoverId = discoverId.toString();
+        const message: DiscoverMessage = {
+            type: DiscoverType.REQUEST,
+            discoverId
+        };
+        this.discovers.add(receiverId);
         return this.encrypt(receiverId, Protocols.DISCOVER, encodeData(message));
+    }
+
+    public async packBootstrap(receiverId: string | UserId) {
+        return new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
     }
 
     protected async decrypt(datagram: Datagram): Promise<Uint8Array> {
@@ -88,8 +129,8 @@ export class FreeSignalNode {
         return decrypted;
     }
 
-    public async open<T extends Uint8Array | UserId | Datagram | UserId | KeyExchangeData | undefined | void>(datagram: Datagram | Uint8Array): Promise<T>
-    public async open(datagram: Datagram | Uint8Array): Promise<Uint8Array | UserId | Datagram | UserId | KeyExchangeData | undefined> {
+    public async open<T extends OpenFnReturns>(datagram: Datagram | Uint8Array): Promise<T>
+    public async open(datagram: Datagram | Uint8Array): Promise<OpenFnReturns> {
         if (datagram instanceof Uint8Array)
             datagram = Datagram.from(datagram);
         switch (datagram.protocol) {
@@ -115,25 +156,38 @@ export class FreeSignalNode {
             case Protocols.DISCOVER:
                 const message = decodeData<DiscoverMessage>(await this.decrypt(datagram));
                 if (message.type === DiscoverType.REQUEST && message.discoverId && !(await this.users.has(message.discoverId))) {
-                    const bundle = await this.bundles.get(message.discoverId);
-                    if (!bundle) return;
-                    const { version, identityKey, signedPreKey, signature } = bundle;
-                    const onetimePreKey = bundle.onetimePreKeys.shift();
-                    if (!onetimePreKey) {
-                        await this.bundles.delete(message.discoverId);
-                        return;
+                    let data: KeyExchangeData;
+                    if (message.discoverId === this.userId.toString()) {
+                        data = await this.keyExchange.generateData();
+                    } else {
+                        const bundle = await this.bundles.get(message.discoverId);
+                        if (!bundle)
+                            return;
+                        const { version, identityKey, signedPreKey, signature } = bundle;
+                        const onetimePreKey = bundle.onetimePreKeys.shift();
+                        if (!onetimePreKey) {
+                            await this.bundles.delete(message.discoverId);
+                            return;
+                        }
+                        data = {
+                            version,
+                            identityKey,
+                            signedPreKey,
+                            signature,
+                            onetimePreKey
+                        };
                     }
-                    const data: KeyExchangeData = {
-                        version,
-                        identityKey,
-                        signedPreKey,
-                        signature,
-                        onetimePreKey
-                    };
-                    return await this.packDiscover(datagram.sender, { type: DiscoverType.RESPONSE, data });
-                } else if (message.type === DiscoverType.RESPONSE && this.discovers.has(message)) {
+                    const response: DiscoverMessage = { type: DiscoverType.RESPONSE, discoverId: message.discoverId, data };
+                    return await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response));
+                } else if (message.type === DiscoverType.RESPONSE && this.discovers.has(message.discoverId)) {
+                    this.discovers.delete(message.discoverId);
                     return message.data;
                 }
+                return;
+
+            case Protocols.BOOTSTRAP:
+                if (datagram.payload)
+                    this.bootstrapRequests.add(new BootstrapRequest(datagram.sender, () => this.packHandshake(decodeData(datagram.payload!))));
                 return;
 
             default:

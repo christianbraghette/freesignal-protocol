@@ -105,8 +105,8 @@ export class KeySession {
 
         if (!this.previousKeys.has(decodeBase64(encrypted.publicKey) + encrypted.count.toString())) {
             const lock = await this.mutex.receiving.acquire();
-            if (!verifyArrays(encrypted.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
 
+            if (!verifyArrays(encrypted.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
                 while (this.receivingChain && this.receivingChain.count < encrypted.previous) {
                     const key = this.receivingChain.getKey();
                     this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
@@ -116,7 +116,6 @@ export class KeySession {
                 this.keyPair = crypto.ECDH.keyPair();
                 this.sendingChain = this.getChain(encrypted.publicKey, this.sendingChain?.count);
             }
-
             if (!this.receivingChain)
                 throw new Error("Error initializing receivingChain");
 

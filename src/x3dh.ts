@@ -20,7 +20,7 @@
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
-import { concatArrays, decodeBase64, decodeData, encodeBase64, encodeData, verifyArrays } from "@freesignal/utils";
+import { concatArrays, decodeBase64, encodeBase64, verifyArrays } from "@freesignal/utils";
 import { IdentityKey, PrivateIdentityKey } from "./types";
 import { createIdentity } from ".";
 

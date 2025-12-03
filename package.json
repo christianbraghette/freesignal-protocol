@@ -1,14 +1,14 @@
 {
   "name": "@freesignal/protocol",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Signal Protocol implementation in javascript",
   "license": "GPL-3.0-or-later",
   "author": "Christian Braghette",
   "type": "commonjs",
-  "main": "index.js",
+  "exports": "./dist/",
+  "main": "./dist/index.js",
   "scripts": {
-    "test": "tsc && node ./build/test.js",
-    "build": "tsc && node ./build/build.js"
+    "test": "tsc && node ./dist/test.js"
   },
   "dependencies": {
     "@freesignal/crypto": "^0.3.0",

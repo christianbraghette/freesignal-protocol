@@ -197,7 +197,7 @@ export enum DiscoverType {
 
 export interface DiscoverMessage {
     type: DiscoverType,
-    discoverId?: string,
+    discoverId: string,
     data?: KeyExchangeData
 }
 
@@ -206,7 +206,8 @@ export enum Protocols {
     MESSAGE = '/freesignal/message',
     RELAY = '/freesignal/relay',
     HANDSHAKE = '/freesignal/handshake',
-    DISCOVER = '/freesignal/discover'
+    DISCOVER = '/freesignal/discover',
+    BOOTSTRAP = '/freesignal/bootstrap'
 }
 export namespace Protocols {
 
