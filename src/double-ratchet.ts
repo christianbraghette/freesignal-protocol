@@ -19,7 +19,7 @@
 
 import crypto from "@freesignal/crypto";
 import { Crypto, LocalStorage } from "@freesignal/interfaces";
-import { concatArrays, decodeBase64, encodeBase64, numberFromArray, numberToArray, verifyArrays } from "@freesignal/utils";
+import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes, compareBytes } from "@freesignal/utils";
 import { EncryptedData } from "./types";
 import { AsyncMutex } from "semaphore.ts";
 
@@ -106,7 +106,7 @@ export class KeySession {
         if (!this.previousKeys.has(decodeBase64(encrypted.publicKey) + encrypted.count.toString())) {
             const lock = await this.mutex.receiving.acquire();
 
-            if (!verifyArrays(encrypted.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
+            if (!compareBytes(encrypted.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
                 while (this.receivingChain && this.receivingChain.count < encrypted.previous) {
                     const key = this.receivingChain.getKey();
                     this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
@@ -244,25 +244,25 @@ export class EncryptedDataConstructor implements EncryptedData {
             return this;
         }
         if (typeof arrays[0] === 'number')
-            arrays[0] = numberToArray(arrays[0], EncryptedDataConstructor.countLength);
+            arrays[0] = numberToBytes(arrays[0], EncryptedDataConstructor.countLength);
         if (typeof arrays[1] === 'number')
-            arrays[1] = numberToArray(arrays[1], EncryptedDataConstructor.countLength);
+            arrays[1] = numberToBytes(arrays[1], EncryptedDataConstructor.countLength);
         if (arrays.length === 6) {
-            arrays.unshift(typeof arrays[5] === 'number' ? numberToArray(arrays[5], 1) : arrays[5]);
+            arrays.unshift(typeof arrays[5] === 'number' ? numberToBytes(arrays[5], 1) : arrays[5]);
             arrays.pop();
         } else if (arrays.length > 1) {
-            arrays.unshift(numberToArray(KeySession.version, 1));
+            arrays.unshift(numberToBytes(KeySession.version, 1));
         }
-        this.raw = concatArrays(...arrays);
+        this.raw = concatBytes(...arrays);
     }
 
     public get length() { return this.raw.length; }
 
-    public get version() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.version.get)); }
+    public get version() { return bytesToNumber(new Uint8Array(this.raw.buffer, ...Offsets.version.get)); }
 
-    public get count() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.count.get)); }
+    public get count() { return bytesToNumber(new Uint8Array(this.raw.buffer, ...Offsets.count.get)); }
 
-    public get previous() { return numberFromArray(new Uint8Array(this.raw.buffer, ...Offsets.previous.get)); }
+    public get previous() { return bytesToNumber(new Uint8Array(this.raw.buffer, ...Offsets.previous.get)); }
 
     public get publicKey() { return new Uint8Array(this.raw.buffer, ...Offsets.publicKey.get); }
 

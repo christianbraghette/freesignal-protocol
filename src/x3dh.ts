@@ -20,7 +20,7 @@
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
-import { concatArrays, decodeBase64, encodeBase64, verifyArrays } from "@freesignal/utils";
+import { concatBytes, decodeBase64, encodeBase64, compareBytes } from "@freesignal/utils";
 import { IdentityKey, PrivateIdentityKey } from "./types";
 import { createIdentity } from ".";
 
@@ -102,7 +102,7 @@ export class KeyExchange {
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
         const session = new KeySession(this.sessions, { remoteKey: identityKey.exchangeKey, rootKey });
-        const cyphertext = await session.encrypt(concatArrays(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
+        const cyphertext = await session.encrypt(concatBytes(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
         if (!cyphertext)
             throw new Error("Decryption error");
 
@@ -140,7 +140,7 @@ export class KeyExchange {
         const cleartext = await session.decrypt(encodeBase64(message.associatedData));
         if (!cleartext)
             throw new Error("Error decrypting ACK message");
-        if (!verifyArrays(cleartext.subarray(0, 64), concatArrays(crypto.hash(identityKey.toBytes()), crypto.hash(this.identityKey.toBytes()))))
+        if (!compareBytes(cleartext.subarray(0, 64), concatBytes(crypto.hash(identityKey.toBytes()), crypto.hash(this.identityKey.toBytes()))))
             throw new Error("Error verifing Associated Data");
         return {
             session,

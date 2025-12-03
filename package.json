@@ -5,7 +5,28 @@
   "license": "GPL-3.0-or-later",
   "author": "Christian Braghette",
   "type": "commonjs",
-  "exports": "./dist/",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./double-ratchet": {
+      "import": "./dist/double-ratchet.js",
+      "types": "./dist/double-ratchet.d.ts"
+    },
+    "./node": {
+      "import": "./dist/node.js",
+      "types": "./dist/node.d.ts"
+    },
+    "./types": {
+      "import": "./dist/types.js",
+      "types": "./dist/types.d.ts"
+    },
+    "./x3dh": {
+      "import": "./dist/x3dh.js",
+      "types": "./dist/x3dh.d.ts"
+    }
+  },
   "main": "./dist/index.js",
   "scripts": {
     "pretest": "tsc",
@@ -15,7 +36,7 @@
   "dependencies": {
     "@freesignal/crypto": "^0.3.0",
     "@freesignal/interfaces": "^0.2.0",
-    "@freesignal/utils": "^1.3.2",
+    "@freesignal/utils": "^1.4.1",
     "semaphore.ts": "^0.2.0"
   },
   "devDependencies": {

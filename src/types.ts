@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { concatArrays, decodeBase64, encodeBase64, numberFromArray, numberToArray } from "@freesignal/utils";
+import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptedDataConstructor } from "./double-ratchet";
@@ -88,7 +88,7 @@ export namespace IdentityKey {
         }
 
         toBytes(): Uint8Array {
-            return concatArrays(numberToArray(this.info, 1), this.signatureKey, this.exchangeKey);
+            return concatBytes(numberToBytes(this.info, 1), this.signatureKey, this.exchangeKey);
         }
 
         toString(): string {
@@ -115,7 +115,7 @@ export namespace IdentityKey {
             else
                 return key as Uint8Array;
         });
-        return new IdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
+        return new IdentityKeyConstructor(keys.length === 2 ? concatBytes(numberToBytes(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
     }
 }
 
@@ -159,7 +159,7 @@ export namespace PrivateIdentityKey {
         }
 
         toBytes(): Uint8Array {
-            return concatArrays(numberToArray(this.info, 1), this.signatureKey, this.exchangeKey);
+            return concatBytes(numberToBytes(this.info, 1), this.signatureKey, this.exchangeKey);
         }
 
         toString(): string {
@@ -186,7 +186,7 @@ export namespace PrivateIdentityKey {
             else
                 return key as Uint8Array;
         });
-        return new PrivateIdentityKeyConstructor(keys.length === 2 ? concatArrays(numberToArray(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
+        return new PrivateIdentityKeyConstructor(keys.length === 2 ? concatBytes(numberToBytes(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
     }
 }
 
@@ -224,11 +224,11 @@ export namespace Protocols {
     }
 
     export function encode(protocol: Protocols, length: number = 1): Uint8Array {
-        return numberToArray(Protocols.toCode(protocol), length);
+        return numberToBytes(Protocols.toCode(protocol), length);
     }
 
     export function decode(array: Uint8Array): Protocols {
-        return Protocols.fromCode(numberFromArray(array));
+        return Protocols.fromCode(bytesToNumber(array));
     }
 }
 
@@ -303,11 +303,11 @@ export class Datagram implements Encodable {
     }
 
     public toBytes(): Uint8Array {
-        return concatArrays(
+        return concatBytes(
             new Uint8Array(1).fill(this.version | (this.signature ? 128 : 0)), //1
             Protocols.encode(this.protocol), //1
             crypto.UUID.parse(this.id) ?? [], //16
-            new Uint8Array(numberToArray(this._createdAt, 8)), //8
+            new Uint8Array(numberToBytes(this._createdAt, 8)), //8
             encodeBase64(this.sender), //32
             encodeBase64(this.receiver), //32
             this._payload ?? new Uint8Array(),
@@ -359,7 +359,7 @@ export class Datagram implements Encodable {
             );
             datagram._version = data[0] & 127;
             datagram._id = crypto.UUID.stringify(data.subarray(2, 18));
-            datagram._createdAt = numberFromArray(data.subarray(18, 26));
+            datagram._createdAt = bytesToNumber(data.subarray(18, 26));
             if (data[0] & 128)
                 datagram._signature = data.subarray(data.length - crypto.EdDSA.signatureLength);
             return datagram;

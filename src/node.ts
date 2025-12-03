@@ -3,7 +3,7 @@ import { Datagram, DiscoverMessage, DiscoverType, IdentityKey, PrivateIdentityKe
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
-import { decodeBase64, decodeData, encodeBase64, encodeData, verifyArrays } from "@freesignal/utils";
+import { decodeData, encodeBase64, encodeData, compareBytes } from "@freesignal/utils";
 
 class BootstrapRequest {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
@@ -183,7 +183,7 @@ export class FreeSignalNode {
             case Protocols.BOOTSTRAP:
                 if (datagram.payload) {
                     const data = decodeData<KeyExchangeData>(datagram.payload);
-                    if (!verifyArrays(UserId.fromKey(data.identityKey).toBytes(), encodeBase64(datagram.sender)))
+                    if (!compareBytes(UserId.fromKey(data.identityKey).toBytes(), encodeBase64(datagram.sender)))
                         return;
                     this.bootstraps.add(new BootstrapRequest(datagram.sender, data, (data) => this.packHandshake(data)))
                 };
