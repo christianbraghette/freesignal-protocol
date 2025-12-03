@@ -8,7 +8,9 @@
   "exports": "./dist/",
   "main": "./dist/index.js",
   "scripts": {
-    "test": "tsc && node ./dist/test.js"
+    "pretest": "tsc",
+    "test": "node ./dist/test.js",
+    "prepare": "tsc"
   },
   "dependencies": {
     "@freesignal/crypto": "^0.3.0",
