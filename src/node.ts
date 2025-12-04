@@ -1,9 +1,28 @@
+/**
+ * FreeSignal Protocol
+ * 
+ * Copyright (C) 2025  Christian Braghette
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>
+ */
+
 import { Database, LocalStorage, Crypto, KeyExchangeDataBundle, KeyExchangeData, KeyExchangeSynMessage } from "@freesignal/interfaces";
-import { Datagram, DiscoverMessage, DiscoverType, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types";
+import { Datagram, decryptData, DiscoverMessage, DiscoverType, encryptData, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types";
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
-import { decodeData, encodeBase64, encodeData, compareBytes } from "@freesignal/utils";
+import { decodeData, encodeBase64, encodeData, compareBytes} from "@freesignal/utils";
 
 class BootstrapRequest {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
@@ -48,7 +67,7 @@ export class FreeSignalNode {
     }>, privateIdentityKey?: PrivateIdentityKey) {
         this.privateIdentityKey = privateIdentityKey ?? createIdentity();
         this.sessions = new SessionMap(storage.sessions);
-        this.keyExchange = new KeyExchange({ keys: storage.keyExchange, sessions: storage.sessions }, this.privateIdentityKey);
+        this.keyExchange = new KeyExchange(storage.keyExchange, this.privateIdentityKey);
         this.users = storage.users;
         this.bundles = storage.bundles;
     }
@@ -71,7 +90,9 @@ export class FreeSignalNode {
         const session = await this.sessions.get(receiverId);
         if (!session)
             throw new Error("Session not found for user: " + receiverId);
-        return new Datagram(this.userId.toString(), receiverId, protocol, await session.encrypt(data)).sign(this.privateIdentityKey.signatureKey);
+        const encrypted = encryptData(session, data);
+        this.sessions.set(receiverId, session);
+        return new Datagram(this.userId.toString(), receiverId, protocol, encrypted).sign(this.privateIdentityKey.signatureKey);
     }
 
     public async packHandshake(data: KeyExchangeData): Promise<Datagram> {
@@ -118,9 +139,8 @@ export class FreeSignalNode {
             throw new Error("Session not found for user: " + datagram.sender);
         if (!datagram.payload)
             throw new Error("Missing payload");
-        const decrypted = await session.decrypt(datagram.payload);
-        if (!decrypted)
-            throw new Error("Decryption failed");
+        const decrypted = decryptData(session, datagram.payload);
+        this.sessions.set(datagram.sender, session);
         return decrypted;
     }
 
@@ -212,7 +232,7 @@ class SessionMap implements LocalStorage<string, KeySession> {
             const sessionData = await this.storage.get(key);
             if (!sessionData)
                 return undefined;
-            return KeySession.from(sessionData, this.storage);
+            return KeySession.from(sessionData);
         }
         return session;
     }

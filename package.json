@@ -1,6 +1,6 @@
 {
   "name": "@freesignal/protocol",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Signal Protocol implementation in javascript",
   "license": "GPL-3.0-or-later",
   "author": "Christian Braghette",
@@ -8,22 +8,22 @@
   "exports": {
     ".": {
       "import": "./dist/index.js",
+      "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
     "./double-ratchet": {
       "import": "./dist/double-ratchet.js",
+      "require": "./dist/double-ratchet.js",
       "types": "./dist/double-ratchet.d.ts"
     },
     "./node": {
       "import": "./dist/node.js",
+      "require": "./dist/node.js",
       "types": "./dist/node.d.ts"
-    },
-    "./types": {
-      "import": "./dist/types.js",
-      "types": "./dist/types.d.ts"
     },
     "./x3dh": {
       "import": "./dist/x3dh.js",
+      "require": "./dist/x3dh.js",
       "types": "./dist/x3dh.d.ts"
     }
   },

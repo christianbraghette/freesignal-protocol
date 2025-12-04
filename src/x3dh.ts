@@ -19,9 +19,9 @@
 
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
-import { ExportedKeySession, KeySession } from "./double-ratchet";
+import { KeySession } from "./double-ratchet";
 import { concatBytes, decodeBase64, encodeBase64, compareBytes } from "@freesignal/utils";
-import { IdentityKey, PrivateIdentityKey } from "./types";
+import { decryptData, encryptData, IdentityKey, PrivateIdentityKey } from "./types";
 import { createIdentity } from ".";
 
 export interface ExportedKeyExchange {
@@ -36,11 +36,9 @@ export class KeyExchange {
 
     private readonly privateIdentityKey: PrivateIdentityKey;
     private readonly storage: LocalStorage<string, Crypto.KeyPair>;
-    private readonly sessions: LocalStorage<string, ExportedKeySession>;
 
-    public constructor(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, privateIdentityKey?: PrivateIdentityKey) {
-        this.storage = storage.keys;
-        this.sessions = storage.sessions;
+    public constructor(storage: LocalStorage<string, Crypto.KeyPair>, privateIdentityKey?: PrivateIdentityKey) {
+        this.storage = storage;
         this.privateIdentityKey = privateIdentityKey ?? createIdentity();
     }
 
@@ -101,9 +99,9 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, signedPreKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
-        const session = new KeySession(this.sessions, { remoteKey: identityKey.exchangeKey, rootKey });
-        const cyphertext = await session.encrypt(concatBytes(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
-        if (!cyphertext)
+        const session = new KeySession({ remoteKey: identityKey.exchangeKey, rootKey });
+        const encrypted = encryptData(session, concatBytes(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
+        if (!encrypted)
             throw new Error("Decryption error");
 
         return {
@@ -114,7 +112,7 @@ export class KeyExchange {
                 ephemeralKey: decodeBase64(ephemeralKey.publicKey),
                 signedPreKeyHash: decodeBase64(signedPreKeyHash),
                 onetimePreKeyHash: decodeBase64(onetimePreKeyHash),
-                associatedData: decodeBase64(cyphertext.toBytes())
+                associatedData: decodeBase64(encrypted.toBytes())
             },
             identityKey
         }
@@ -136,16 +134,16 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, ephemeralKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
-        const session = new KeySession(this.sessions, { secretKey: this.privateIdentityKey.exchangeKey, rootKey })
-        const cleartext = await session.decrypt(encodeBase64(message.associatedData));
-        if (!cleartext)
+        const session = new KeySession({ secretKey: this.privateIdentityKey.exchangeKey, rootKey });
+        const data = decryptData(session, encodeBase64(message.associatedData));
+        if (!data)
             throw new Error("Error decrypting ACK message");
-        if (!compareBytes(cleartext.subarray(0, 64), concatBytes(crypto.hash(identityKey.toBytes()), crypto.hash(this.identityKey.toBytes()))))
+        if (!compareBytes(data.subarray(0, 64), concatBytes(crypto.hash(identityKey.toBytes()), crypto.hash(this.identityKey.toBytes()))))
             throw new Error("Error verifing Associated Data");
         return {
             session,
             identityKey,
-            associatedData: cleartext.subarray(64)
+            associatedData: data.subarray(64)
         };
     }
 }
