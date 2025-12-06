@@ -269,6 +269,15 @@ export interface SignedDatagram extends Datagram {
     signature: string;
 }
 
+interface DatagramHeader {
+    readonly id: string;
+    readonly version: number;
+    readonly sender: string;
+    readonly receiver: string;
+    readonly protocol: Protocols;
+    readonly createdAt: number;
+}
+
 export class Datagram implements Encodable {
     public static version = 1;
 
@@ -292,7 +301,7 @@ export class Datagram implements Encodable {
         this._createdAt = Date.now();
         this._payload = payload instanceof Uint8Array ? payload : payload?.toBytes();
     }
-
+    
     public get id() {
         return this._id;
     }
@@ -322,6 +331,17 @@ export class Datagram implements Encodable {
         const data = this.toBytes();
         data[0] &= 127;
         return data.subarray(0, data.length - (this._signature ? crypto.EdDSA.signatureLength : 0));
+    }
+
+    get header(): DatagramHeader {
+        return {
+            id: this.id,
+            version: this.version,
+            sender: this.sender,
+            receiver: this.receiver,
+            protocol: this.protocol,
+            createdAt: this.createdAt
+        }
     }
 
     public toBytes(): Uint8Array {
