@@ -269,7 +269,7 @@ export interface SignedDatagram extends Datagram {
     signature: string;
 }
 
-interface DatagramHeader {
+export interface DatagramHeader {
     readonly id: string;
     readonly version: number;
     readonly sender: string;
