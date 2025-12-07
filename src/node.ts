@@ -182,11 +182,11 @@ export class FreeSignalNode {
                 return out;
 
             case Protocols.MESSAGE:
-                out.payload = decodeData(await this.decrypt(datagram));
+                out.payload = await this.decrypt(datagram);
                 return out;
 
             case Protocols.RELAY:
-                out.payload = decodeData(await this.decrypt(datagram));
+                out.payload = await this.decrypt(datagram);
                 return out;
 
             case Protocols.DISCOVER:
