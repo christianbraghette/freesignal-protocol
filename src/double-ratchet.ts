@@ -56,26 +56,39 @@ export class KeySession {
     private rootKey?: Uint8Array;
     private sendingChain?: KeyChain;
     private receivingChain?: KeyChain;
+    private nextHeaderKey?: Uint8Array
     private previousKeys = new KeyMap<string, Uint8Array>();
 
-    public constructor(opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array } = {}) {
+    public constructor(opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, headerKey?: Uint8Array, nextHeaderKey?: Uint8Array, rootKey?: Uint8Array, } = {}) {
         this.id = opts.id ?? crypto.UUID.generate().toString();
         this.keyPair = crypto.ECDH.keyPair(opts.secretKey);
         if (opts.rootKey)
             this.rootKey = opts.rootKey;
+        if (opts.nextHeaderKey)
+            this.nextHeaderKey = opts.nextHeaderKey;
 
         if (opts.remoteKey) {
-            this.sendingChain = this.getChain(opts.remoteKey);
+            this.sendingChain = this.getChain(opts.remoteKey, opts.headerKey);
         }
     }
 
-    private getChain(remoteKey: Uint8Array, previousCount?: number): KeyChain {
+    private getChain(remoteKey: Uint8Array, headerKey?: Uint8Array, previousCount?: number): KeyChain {
         const sharedKey = crypto.ECDH.scalarMult(this.keyPair.secretKey, remoteKey);
         if (!this.rootKey)
             this.rootKey = crypto.hash(sharedKey);
-        const hashkey = crypto.hkdf(sharedKey, this.rootKey, KeySession.info, KeySession.keyLength * 2);
+        const hashkey = crypto.hkdf(sharedKey, this.rootKey, KeySession.info, KeySession.keyLength * 3);
         this.rootKey = hashkey.subarray(0, KeySession.keyLength);
-        return new KeyChain(this.publicKey, remoteKey, hashkey.subarray(KeySession.keyLength), previousCount);
+        return new KeyChain(this.publicKey, remoteKey, hashkey.subarray(KeySession.keyLength, KeySession.keyLength * 2), hashkey.subarray(KeySession.keyLength * 2), headerKey, previousCount);
+    }
+
+    public getHeaderKeys(): {
+        readonly sending?: Uint8Array,
+        readonly receiving?: Uint8Array
+    } {
+        return {
+            sending: this.sendingChain?.headerKey,
+            receiving: this.nextHeaderKey ?? this.receivingChain?.headerKey
+        }
     }
 
     public getSendingKey(): PrivateEncryptionKeys | undefined {
@@ -99,9 +112,10 @@ export class KeySession {
                     this.previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
                 }
 
-                this.receivingChain = this.getChain(encryptionKeys.publicKey);
+                this.receivingChain = this.getChain(encryptionKeys.publicKey, this.nextHeaderKey ?? this.receivingChain?.nextHeaderKey);
+                this.nextHeaderKey = undefined;
                 this.keyPair = crypto.ECDH.keyPair();
-                this.sendingChain = this.getChain(encryptionKeys.publicKey, this.sendingChain?.count);
+                this.sendingChain = this.getChain(encryptionKeys.publicKey, this.sendingChain?.nextHeaderKey, this.sendingChain?.count);
             }
             if (!this.receivingChain)
                 throw new Error("Error initializing receivingChain");
@@ -157,6 +171,8 @@ interface ExportedKeyChain {
     publicKey: string;
     remoteKey: string;
     chainKey: string;
+    nextHeaderKey: string;
+    headerKey?: string;
     count: number;
     previousCount: number
 }
@@ -164,7 +180,7 @@ interface ExportedKeyChain {
 class KeyChain {
     private _count: number = 0;
 
-    public constructor(public readonly publicKey: Uint8Array, public readonly remoteKey: Uint8Array, private chainKey: Uint8Array, public readonly previousCount: number = 0) { }
+    public constructor(public readonly publicKey: Uint8Array, public readonly remoteKey: Uint8Array, private chainKey: Uint8Array, public readonly nextHeaderKey: Uint8Array, public readonly headerKey?: Uint8Array, public readonly previousCount: number = 0) { }
 
     public getKey(): Uint8Array {
         if (++this._count >= KeySession.maxCount)
@@ -187,13 +203,15 @@ class KeyChain {
             publicKey: decodeBase64(this.publicKey),
             remoteKey: decodeBase64(this.remoteKey),
             chainKey: decodeBase64(this.chainKey),
+            nextHeaderKey: decodeBase64(this.nextHeaderKey),
+            headerKey: this.headerKey ? decodeBase64(this.headerKey) : undefined,
             count: this.count,
             previousCount: this.previousCount
         }
     }
 
     public static from(obj: ExportedKeyChain): KeyChain {
-        const chain = new KeyChain(encodeBase64(obj.publicKey), encodeBase64(obj.remoteKey), encodeBase64(obj.chainKey), obj.previousCount);
+        const chain = new KeyChain(encodeBase64(obj.publicKey), encodeBase64(obj.remoteKey), encodeBase64(obj.chainKey), encodeBase64(obj.nextHeaderKey), obj.headerKey ? encodeBase64(obj.headerKey) : undefined, obj.previousCount);
         chain._count = obj.count;
         return chain;
     }

@@ -22,7 +22,7 @@ import { LocalStorage, Crypto, Database, KeyExchangeDataBundle } from "@freesign
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { KeyExchange } from "./x3dh";
 import { IdentityKey, PrivateIdentityKey } from "./types";
-import { FreeSignalNode } from "./node";
+import { BootstrapRequest, FreeSignalNode } from "./node";
 
 /**
  * Creates a new Double Ratchet session for secure message exchange.
@@ -68,6 +68,7 @@ export function createNode(storage: Database<{
     keyExchange: LocalStorage<string, Crypto.KeyPair>;
     users: LocalStorage<string, IdentityKey>;
     bundles: LocalStorage<string, KeyExchangeDataBundle>;
+    bootstraps: LocalStorage<string, BootstrapRequest>;
 }>, privateIdentityKey?: PrivateIdentityKey): FreeSignalNode {
     return new FreeSignalNode(storage, privateIdentityKey);
 }

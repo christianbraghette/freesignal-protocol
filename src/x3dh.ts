@@ -31,7 +31,7 @@ export interface ExportedKeyExchange {
 
 export class KeyExchange {
     public static readonly version = 1;
-    private static readonly hkdfInfo = "freesignal/x3dh/" + KeyExchange.version;
+    private static readonly hkdfInfo = "freesignal/x3dh/v." + KeyExchange.version;
     private static readonly maxOPK = 10;
 
     private readonly privateIdentityKey: PrivateIdentityKey;

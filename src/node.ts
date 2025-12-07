@@ -18,26 +18,29 @@
  */
 
 import { Database, LocalStorage, Crypto, KeyExchangeDataBundle, KeyExchangeData, KeyExchangeSynMessage } from "@freesignal/interfaces";
-import { Datagram, decryptData, DiscoverMessage, DiscoverType, encryptData, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types";
+import { Datagram, DatagramHeader, decryptData, DiscoverMessage, DiscoverType, encryptData, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types";
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
-import { decodeData, encodeBase64, encodeData, compareBytes} from "@freesignal/utils";
+import { decodeData, encodeBase64, encodeData, compareBytes } from "@freesignal/utils";
 
-class BootstrapRequest {
+export class BootstrapRequest {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
 
-    public constructor(public readonly senderId: UserId | string, public readonly data: KeyExchangeData, private readonly acceptFn: (data: KeyExchangeData) => Promise<Datagram>) { }
+    public constructor(public readonly senderId: UserId | string, private readonly data: KeyExchangeData) { }
 
     public get status() {
         return this.#status;
     }
 
-    public async accept(): Promise<Datagram | undefined> {
+    public async get(): Promise<KeyExchangeData | undefined> {
+        return this.#status === 'accepted' ? this.data : undefined;
+    }
+
+    public async accept(): Promise<KeyExchangeData | undefined> {
         if (this.status === 'pending')
             this.#status = 'accepted';
-        if (this.#status === 'accepted')
-            return await this.acceptFn(this.data);
+        return await this.get();
     }
 
     public deny() {
@@ -48,8 +51,6 @@ class BootstrapRequest {
 
 }
 
-type OpenFnReturns = Uint8Array | UserId | Datagram | UserId | KeyExchangeData | undefined | void;
-
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
     protected readonly sessions: SessionMap;
@@ -57,19 +58,21 @@ export class FreeSignalNode {
     protected readonly bundles: LocalStorage<string, KeyExchangeDataBundle>;
     protected readonly keyExchange: KeyExchange;
     protected readonly discovers: Set<string> = new Set();
-    protected readonly bootstraps: Set<BootstrapRequest> = new Set();
+    protected readonly bootstraps: LocalStorage<string, BootstrapRequest>;
 
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
         keyExchange: LocalStorage<string, Crypto.KeyPair>,
         users: LocalStorage<string, IdentityKey>,
-        bundles: LocalStorage<string, KeyExchangeDataBundle>
+        bundles: LocalStorage<string, KeyExchangeDataBundle>,
+        bootstraps: LocalStorage<string, BootstrapRequest>
     }>, privateIdentityKey?: PrivateIdentityKey) {
         this.privateIdentityKey = privateIdentityKey ?? createIdentity();
         this.sessions = new SessionMap(storage.sessions);
         this.keyExchange = new KeyExchange(storage.keyExchange, this.privateIdentityKey);
         this.users = storage.users;
         this.bundles = storage.bundles;
+        this.bootstraps = storage.bootstraps;
     }
 
     public get identityKey(): IdentityKey {
@@ -80,8 +83,10 @@ export class FreeSignalNode {
         return UserId.fromKey(this.identityKey);
     }
 
-    public get requests(): BootstrapRequest[] {
-        return Array.from(this.bootstraps.values());
+    public onRequest: (request: BootstrapRequest) => void = () => { };
+
+    public async getRequest(userId: string): Promise<KeyExchangeData | undefined> {
+        return (await this.bootstraps.get(userId))?.get();
     }
 
     protected async encrypt(receiverId: string | UserId, protocol: Protocols, data: Uint8Array): Promise<Datagram> {
@@ -144,10 +149,24 @@ export class FreeSignalNode {
         return decrypted;
     }
 
-    public async open<T extends OpenFnReturns>(datagram: Datagram | Uint8Array): Promise<T>
-    public async open(datagram: Datagram | Uint8Array): Promise<OpenFnReturns> {
+    /**
+     * Open the datagram and execute operation of Discover and Handshake.
+     * 
+     * @param datagram 
+     * @returns Header and decrypted payload
+     */
+    public async open(datagram: Datagram | Uint8Array): Promise<{
+        header: DatagramHeader,
+        payload?: Uint8Array
+    }> {
         if (datagram instanceof Uint8Array)
             datagram = Datagram.from(datagram);
+        let out: {
+            header: DatagramHeader,
+            payload?: Uint8Array
+        } = {
+            header: DatagramHeader.from(datagram.header)
+        };
         switch (datagram.protocol) {
             case Protocols.HANDSHAKE:
                 if (!datagram.payload)
@@ -160,13 +179,15 @@ export class FreeSignalNode {
                 await this.users.set(userId.toString(), identityKey);
                 await this.sessions.set(userId.toString(), session);
                 await this.bundles.set(userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
-                return;
+                return out;
 
             case Protocols.MESSAGE:
-                return decodeData(await this.decrypt(datagram));
+                out.payload = decodeData(await this.decrypt(datagram));
+                return out;
 
             case Protocols.RELAY:
-                return decodeData<Datagram>(await this.decrypt(datagram));
+                out.payload = decodeData(await this.decrypt(datagram));
+                return out;
 
             case Protocols.DISCOVER:
                 const message = decodeData<DiscoverMessage>(await this.decrypt(datagram));
@@ -177,12 +198,12 @@ export class FreeSignalNode {
                     } else {
                         const bundle = await this.bundles.get(message.discoverId);
                         if (!bundle)
-                            return;
+                            return out;
                         const { version, identityKey, signedPreKey, signature } = bundle;
                         const onetimePreKey = bundle.onetimePreKeys.shift();
                         if (!onetimePreKey) {
                             await this.bundles.delete(message.discoverId);
-                            return;
+                            return out;
                         }
                         data = {
                             version,
@@ -193,22 +214,30 @@ export class FreeSignalNode {
                         };
                     }
                     const response: DiscoverMessage = { type: DiscoverType.RESPONSE, discoverId: message.discoverId, data };
-                    return await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response));
+                    out.payload = (await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response))).toBytes();
                 } else if (message.type === DiscoverType.RESPONSE && this.discovers.has(message.discoverId)) {
                     this.discovers.delete(message.discoverId);
-                    return message.data;
+                    if (message.data)
+                        out.payload = encodeData(message.data);
                 }
-                return;
+                return out;
 
             case Protocols.BOOTSTRAP:
                 if (datagram.payload) {
                     const data = decodeData<KeyExchangeData>(datagram.payload);
                     if (!compareBytes(UserId.fromKey(data.identityKey).toBytes(), encodeBase64(datagram.sender)))
-                        return;
-                    this.bootstraps.add(new BootstrapRequest(datagram.sender, data, (data) => this.packHandshake(data)))
+                        new Error("Malicious bootstrap request");
+                    const request = new BootstrapRequest(datagram.sender, data);
+                    await this.bootstraps.set(datagram.sender, request);
+                    this.onRequest(request);
                 };
-                return;
-
+                const request = await this.bootstraps.get(datagram.sender);
+                if (request) {
+                    const data = await request.get()
+                    if (data)
+                        out.payload = encodeData(data);
+                }
+                return out;
             default:
                 throw new Error("Invalid protocol");
         }

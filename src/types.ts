@@ -269,16 +269,44 @@ export interface SignedDatagram extends Datagram {
     signature: string;
 }
 
-export interface DatagramHeader {
+export class DatagramHeader implements Encodable {
+    private static offset = 26 + crypto.EdDSA.publicKeyLength * 2;
+
     readonly id: string;
     readonly version: number;
     readonly sender: string;
     readonly receiver: string;
     readonly protocol: Protocols;
     readonly createdAt: number;
+
+    private constructor(data: Uint8Array) {
+        this.version = data[0] & 127;
+        this.protocol = Protocols.decode(data.subarray(1, 2));
+        this.id = crypto.UUID.stringify(data.subarray(2, 18));
+        this.createdAt = bytesToNumber(data.subarray(18, 26));
+        this.sender = decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
+        this.receiver = decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramHeader.offset));
+    }
+
+    public toBytes(): Uint8Array {
+        return concatBytes(
+            numberToBytes(this.version, 1),
+            Protocols.encode(this.protocol, 1),
+            crypto.UUID.parse(this.protocol),
+            numberToBytes(this.createdAt, 8),
+            encodeBase64(this.sender),
+            encodeBase64(this.receiver)
+        );
+    }
+
+    public static from(data: Uint8Array | string) {
+        if (typeof data === 'string')
+            data = encodeBase64(data);
+        return new DatagramHeader(data);
+    }
 }
 
-export class Datagram implements Encodable {
+export class Datagram implements Encodable, DatagramHeader {
     public static version = 1;
 
     private _id: string;
@@ -301,7 +329,7 @@ export class Datagram implements Encodable {
         this._createdAt = Date.now();
         this._payload = payload instanceof Uint8Array ? payload : payload?.toBytes();
     }
-    
+
     public get id() {
         return this._id;
     }
@@ -327,21 +355,14 @@ export class Datagram implements Encodable {
         return this._signature ? decodeBase64(this._signature) : undefined;
     }
 
-    private get unsigned() {
+    private get unsigned(): Uint8Array {
         const data = this.toBytes();
         data[0] &= 127;
         return data.subarray(0, data.length - (this._signature ? crypto.EdDSA.signatureLength : 0));
     }
 
-    get header(): DatagramHeader {
-        return {
-            id: this.id,
-            version: this.version,
-            sender: this.sender,
-            receiver: this.receiver,
-            protocol: this.protocol,
-            createdAt: this.createdAt
-        }
+    get header(): Uint8Array {
+        return this.toBytes().slice(0, Datagram.headerOffset);
     }
 
     public toBytes(): Uint8Array {
