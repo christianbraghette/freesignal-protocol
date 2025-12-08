@@ -238,7 +238,7 @@ export interface DiscoverMessage {
 }
 
 export enum Protocols {
-    NULL = '',
+    PING = '/freesignal/ping',
     MESSAGE = '/freesignal/message',
     RELAY = '/freesignal/relay',
     HANDSHAKE = '/freesignal/handshake',

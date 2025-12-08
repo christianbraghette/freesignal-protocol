@@ -238,7 +238,7 @@ export class FreeSignalNode {
                     out.datagram = await this.packHandshake(bootstrap);
                 return out;
 
-            case Protocols.NULL:
+            case Protocols.PING:
                 return out;
 
             default:
