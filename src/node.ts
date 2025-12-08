@@ -238,6 +238,9 @@ export class FreeSignalNode {
                     out.datagram = await this.packHandshake(bootstrap);
                 return out;
 
+            case Protocols.NULL:
+                return out;
+
             default:
                 throw new Error("Invalid protocol");
         }
