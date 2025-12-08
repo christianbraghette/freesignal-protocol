@@ -19,7 +19,7 @@
 
 import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
-import { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
+import type { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptionKeys, KeySession } from "./double-ratchet";
 
 export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
@@ -568,7 +568,7 @@ export class AsyncMap<K, V> implements LocalStorage<K, V> {
         return this.map.clear();
     }
 
-    entries() {
-        return Array.from(this.map.entries()).values();
+    async entries(): Promise<Iterator<[K, V]>> {
+        return this.map.entries();
     }
 }
