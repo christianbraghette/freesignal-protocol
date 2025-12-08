@@ -93,13 +93,14 @@ export class KeyExchange {
         const onetimePreKey = message.onetimePreKey ? encodeBase64(message.onetimePreKey) : undefined;
         const signedPreKeyHash = crypto.hash(signedPreKey);
         const onetimePreKeyHash = onetimePreKey ? crypto.hash(onetimePreKey) : new Uint8Array();
-        const rootKey = crypto.hkdf(new Uint8Array([
+        const derivedKey = crypto.hkdf(new Uint8Array([
             ...crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, signedPreKey),
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, identityKey.exchangeKey),
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, signedPreKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
-        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
-        const session = new KeySession({ remoteKey: identityKey.exchangeKey, rootKey });
+        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 2);
+        //, headerKey: derivedKey.subarray(KeySession.keyLength)
+        const session = new KeySession({ remoteKey: identityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
         const encrypted = encryptData(session, concatBytes(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
         if (!encrypted)
             throw new Error("Decryption error");
@@ -128,13 +129,14 @@ export class KeyExchange {
         if (!this.storage.delete(hash))
             throw new Error("Bundle store deleting error");
         const ephemeralKey = encodeBase64(message.ephemeralKey);
-        const rootKey = crypto.hkdf(new Uint8Array([
+        const derivedKey = crypto.hkdf(new Uint8Array([
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, identityKey.exchangeKey),
             ...crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, ephemeralKey),
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, ephemeralKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
-        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength);
-        const session = new KeySession({ secretKey: this.privateIdentityKey.exchangeKey, rootKey });
+        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 2);
+        //, nextHeaderKey: derivedKey.subarray(KeySession.keyLength)
+        const session = new KeySession({ secretKey: this.privateIdentityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
         const data = decryptData(session, encodeBase64(message.associatedData));
         if (!data)
             throw new Error("Error decrypting ACK message");

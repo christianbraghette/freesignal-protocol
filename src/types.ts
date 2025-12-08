@@ -20,27 +20,41 @@
 import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
-import { KeySession } from "./double-ratchet";
+import { EncryptionKeys, KeySession } from "./double-ratchet";
 
 export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
+    //console.log(session.id, ' Sending: ', decodeBase64(session.getHeaderKeys().sending ?? new Uint8Array()));
     const key = session.getSendingKey();
     if (!key)
         throw new Error("Error generating key");
-    const nonce = crypto.randomBytes(EncryptedDataConstructor.nonceLength);
+    const nonce = crypto.randomBytes(EncryptionHeader.nonceLength);
     const ciphertext = crypto.box.encrypt(data, nonce, key.secretKey);
-    return new EncryptedDataConstructor(key.count, key.previous, key.publicKey, nonce, ciphertext);
+    const headerKey = session.getHeaderKeys().sending;
+    let header = new EncryptionHeader(key, nonce).toBytes();
+    const headerNonce = crypto.randomBytes(EncryptionHeader.nonceLength)
+    if (headerKey)
+        header = crypto.box.encrypt(header, headerNonce, headerKey);
+    const test = new EncryptedData(header, headerNonce, ciphertext);
+    return test;
 }
 
 export function decryptData(session: KeySession, encryptedData: Uint8Array): Uint8Array {
+    //console.log(session.id, ' Receiving: ', decodeBase64(session.getHeaderKeys().receiving ?? new Uint8Array()));
     const encrypted = EncryptedData.from(encryptedData);
-    const key = session.getReceivingKey(encrypted);
+    const headerKey = session.getHeaderKeys().receiving;
+    let headerData: Uint8Array | undefined = encrypted.header;
+    if (headerKey) {
+        headerData = crypto.box.decrypt(headerData, encrypted.nonce, headerKey);
+        if (!headerData)
+            throw new Error("Error calculating header");
+    }
+    const header = EncryptionHeader.from(headerData);
+    const key = session.getReceivingKey(header);
     if (!key)
         throw new Error("Error calculating key");
-
-    const decrypted = crypto.box.decrypt(encrypted.ciphertext, encrypted.nonce, key);
+    const decrypted = crypto.box.decrypt(encrypted.payload, header.nonce, key);
     if (!decrypted)
         throw new Error("Error decrypting data");
-
     return decrypted;
 }
 
@@ -428,187 +442,102 @@ export class Datagram implements Encodable, DatagramHeader {
             return datagram;
         } else if (data instanceof Datagram) {
             const datagram = new Datagram(data.sender, data.receiver, data.protocol, data.payload);
-            datagram._id = datagram.id;
-            datagram._version = datagram.version;
-            datagram._createdAt = datagram._createdAt;
-            datagram._signature = datagram._signature;
+            datagram._id = data.id;
+            datagram._version = data.version;
+            datagram._createdAt = data._createdAt;
+            datagram._signature = data._signature;
             return datagram;
         } else
             throw new Error('Invalid constructor arguments for Datagram');
     }
 }
 
-/**
- * Interface representing an encrypted payload.
- * Provides metadata and de/serialization methods.
- */
-export interface EncryptedData extends Encodable {
-
-    /**
-     * The length of the payload.
-     */
-    readonly length: number;
-
-    /**
-     * Version of the payload.
-     */
-    readonly version: number;
-
-    /**
-     * The current message count of the sending chain.
-     */
-    readonly count: number;
-
-    /**
-     * The count of the previous sending chain.
-     */
-    readonly previous: number;
-
-    /**
-     * The sender's public key used for this message.
-     */
-    readonly publicKey: Uint8Array;
-
-    /**
-     * The nonce used during encryption.
-     */
-    readonly nonce: Uint8Array;
-
-    /**
-     * The encrypted message content.
-     */
-    readonly ciphertext: Uint8Array;
-
-    /**
-     * Serializes the payload into a Uint8Array for transport.
-     */
-    toBytes(): Uint8Array;
-
-    /**
-     * Returns the payload as a Base64 string.
-     */
-    toString(): string;
-
-    /**
-     * Returns the decoded object as a JSON string.
-     */
-    toJSON(): {
-        version: number;
-        count: number;
-        previous: number;
-        publicKey: string;
-        nonce: string;
-        ciphertext: string;
-    };
-}
-export namespace EncryptedData {
-
-    /**
-     * Static factory method that constructs an `EncryptedPayload` from a raw Uint8Array.
-     *
-     * @param array - A previously serialized encrypted payload.
-     * @returns An instance of `EncryptedPayload`.
-     */
-    export function from(array: Uint8Array | EncryptedData) {
-        return new EncryptedDataConstructor(array) as EncryptedData;
-    }
-}
-
-class EncryptedDataConstructor implements EncryptedData {
-    public static readonly secretKeyLength = crypto.ECDH.secretKeyLength;
-    public static readonly publicKeyLength = crypto.ECDH.publicKeyLength;
+export class EncryptionHeader implements EncryptionKeys, Encodable {
     public static readonly keyLength = crypto.box.keyLength;
     public static readonly nonceLength = crypto.box.nonceLength;
     public static readonly countLength = 2;
 
-    private raw: Uint8Array;
 
-    constructor(count: number | Uint8Array, previous: number | Uint8Array, publicKey: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array, version?: number | Uint8Array)
-    constructor(encrypted: Uint8Array | EncryptedData)
-    constructor(...arrays: Uint8Array[]) {
-        arrays = arrays.filter(value => value !== undefined);
-        if (arrays[0] instanceof EncryptedDataConstructor) {
-            this.raw = arrays[0].raw;
-            return this;
-        }
-        if (typeof arrays[0] === 'number')
-            arrays[0] = numberToBytes(arrays[0], EncryptedDataConstructor.countLength);
-        if (typeof arrays[1] === 'number')
-            arrays[1] = numberToBytes(arrays[1], EncryptedDataConstructor.countLength);
-        if (arrays.length === 6) {
-            arrays.unshift(typeof arrays[5] === 'number' ? numberToBytes(arrays[5], 1) : arrays[5]);
-            arrays.pop();
-        } else if (arrays.length > 1) {
-            arrays.unshift(numberToBytes(KeySession.version, 1));
-        }
-        this.raw = concatBytes(...arrays);
+    public readonly count: number;
+    public readonly previous: number;
+    public readonly publicKey: Uint8Array;
+
+    public constructor(keys: EncryptionKeys, public readonly nonce: Uint8Array) {
+        this.count = keys.count;
+        this.previous = keys.previous;
+        this.publicKey = keys.publicKey;
     }
-
-    public get length() { return this.raw.length; }
-
-    public get version() { return bytesToNumber(new Uint8Array(this.raw.buffer, ...Offsets.version.get)); }
-
-    public get count() { return bytesToNumber(new Uint8Array(this.raw.buffer, ...Offsets.count.get)); }
-
-    public get previous() { return bytesToNumber(new Uint8Array(this.raw.buffer, ...Offsets.previous.get)); }
-
-    public get publicKey() { return new Uint8Array(this.raw.buffer, ...Offsets.publicKey.get); }
-
-    public get nonce() { return new Uint8Array(this.raw.buffer, ...Offsets.nonce.get); }
-
-    public get ciphertext() { return new Uint8Array(this.raw.buffer, Offsets.ciphertext.start); }
 
     public toBytes(): Uint8Array {
-        return this.raw;
+        return concatBytes(numberToBytes(this.count, EncryptionHeader.countLength), numberToBytes(this.previous, EncryptionHeader.countLength), this.publicKey, this.nonce)
     }
 
-    public toString(): string {
-        return decodeBase64(this.raw);
-    }
-
-    public toJSON() {
+    public toJSON(): {
+        count: number;
+        previous: number;
+        publicKey: string;
+    } {
         return {
-            version: this.version,
             count: this.count,
             previous: this.previous,
-            publicKey: decodeBase64(this.publicKey),
-            nonce: decodeBase64(this.nonce),
-            ciphertext: decodeBase64(this.ciphertext)
-        };
+            publicKey: decodeBase64(this.publicKey)
+        }
     }
+
+    public static from(data: Uint8Array | EncryptionHeader): EncryptionHeader {
+        if (data instanceof EncryptionHeader)
+            data = data.toBytes();
+        return new EncryptionHeader({
+            count: bytesToNumber(data.subarray(0, EncryptionHeader.countLength)),
+            previous: bytesToNumber(data.subarray(EncryptionHeader.countLength, EncryptionHeader.countLength * 2)),
+            publicKey: data.subarray(EncryptionHeader.countLength * 2, EncryptionHeader.countLength * 2 + EncryptionHeader.keyLength)
+        }, data.subarray(EncryptionHeader.countLength * 2 + EncryptionHeader.keyLength, EncryptionHeader.countLength * 2 + EncryptionHeader.keyLength + EncryptedData.nonceLength));
+    }
+
 }
 
-class Offsets {
+export class EncryptedData implements Encodable {
+    public static readonly version = 1;
+    public static readonly nonceLength = crypto.box.nonceLength;
 
-    private static set(start: number, length?: number) {
-        class Offset {
-            readonly start: number;
-            readonly end?: number;
-            readonly length?: number;
+    private _version: number = EncryptedData.version;
 
-            constructor(start: number, length?: number) {
-                this.start = start;
-                this.length = length;
+    public constructor(public readonly header: Uint8Array, public readonly nonce: Uint8Array, public readonly payload: Uint8Array) { }
 
-                if (typeof length === 'number')
-                    this.end = start + length;
-            }
-
-            get get() {
-                return [this.start, this.length];
-            }
-        }
-        return new Offset(start, length);
+    public get version(): number {
+        return this._version;
     }
 
-    static readonly checksum = Offsets.set(0, 0);
-    static readonly version = Offsets.set(Offsets.checksum.end!, 1);
-    static readonly count = Offsets.set(Offsets.version.end!, EncryptedDataConstructor.countLength);
-    static readonly previous = Offsets.set(Offsets.count.end!, EncryptedDataConstructor.countLength);
-    static readonly publicKey = Offsets.set(Offsets.previous.end!, EncryptedDataConstructor.publicKeyLength);
-    static readonly nonce = Offsets.set(Offsets.publicKey.end!, EncryptedDataConstructor.nonceLength);
-    static readonly ciphertext = Offsets.set(Offsets.nonce.end!, undefined);
+    public get length(): number {
+        return this.toBytes().length;
+    }
 
+    public toBytes(): Uint8Array {
+        return concatBytes(numberToBytes(this._version, 1), numberToBytes(this.header.length, 3), this.header, this.nonce, this.payload);
+    }
+
+    public toJSON(): {
+        version: number;
+        header: string;
+        nonce: string;
+        payload: string;
+    } {
+        return {
+            version: this._version,
+            header: decodeBase64(this.header),
+            nonce: decodeBase64(this.nonce),
+            payload: decodeBase64(this.payload)
+        }
+    }
+
+    public static from(data: Uint8Array | EncryptedData): EncryptedData {
+        if (data instanceof EncryptedData)
+            data = data.toBytes();
+        const headerLength = bytesToNumber(data.subarray(1, 4));
+        const obj = new EncryptedData(data.subarray(4, 4 + headerLength), data.subarray(4 + headerLength, 4 + headerLength + this.nonceLength), data.subarray(4 + headerLength + this.nonceLength));
+        obj._version = bytesToNumber(data.subarray(0, 1));
+        return obj;
+    }
 }
 
 export class AsyncMap<K, V> implements LocalStorage<K, V> {

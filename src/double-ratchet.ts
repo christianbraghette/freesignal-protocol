@@ -59,16 +59,17 @@ export class KeySession {
     private nextHeaderKey?: Uint8Array
     private previousKeys = new KeyMap<string, Uint8Array>();
 
-    public constructor(opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, headerKey?: Uint8Array, nextHeaderKey?: Uint8Array, rootKey?: Uint8Array, } = {}) {
+    //headerKey?: Uint8Array, nextHeaderKey?: Uint8Array,
+    public constructor(opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array, } = {}) {
         this.id = opts.id ?? crypto.UUID.generate().toString();
         this.keyPair = crypto.ECDH.keyPair(opts.secretKey);
         if (opts.rootKey)
             this.rootKey = opts.rootKey;
-        if (opts.nextHeaderKey)
-            this.nextHeaderKey = opts.nextHeaderKey;
+        //if (opts.nextHeaderKey)
+        //    this.nextHeaderKey = opts.nextHeaderKey;
 
         if (opts.remoteKey) {
-            this.sendingChain = this.getChain(opts.remoteKey, opts.headerKey);
+            this.sendingChain = this.getChain(opts.remoteKey);//, opts.headerKey);
         }
     }
 
@@ -87,7 +88,7 @@ export class KeySession {
     } {
         return {
             sending: this.sendingChain?.headerKey,
-            receiving: this.nextHeaderKey ?? this.receivingChain?.headerKey
+            receiving: (this.receivingChain?.headerKey ?? this.receivingChain?.nextHeaderKey) ?? this.nextHeaderKey
         }
     }
 

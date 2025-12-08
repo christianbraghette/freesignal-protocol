@@ -12,7 +12,7 @@ setImmediate(async () => {
     alice.onRequest = (request) => { request.accept(); };
 
     const test = (await alice.open(bobBootstrap)).datagram;
-    console.log(Datagram.from(test!).toJSON());
+    console.log("Valid bootstrap: ", !!test);
     const bobRequest = await alice.getRequest(bob.userId.toString());
     if (!bobRequest)
         throw new Error("Bootstrap Failed");
@@ -34,7 +34,11 @@ setImmediate(async () => {
 
     console.log("Alice: ", decodeData<string>((await bob.open(fourth)).payload!));
 
-    //const testone = await Promise.all(Array(400).fill(0).map(() => alice.packData(bob.userId, decodeBase64(crypto.randomBytes(64)))));
+    const fifth = await Promise.all(["I'm thinking...", "His this secure?"].map(msg => bob.packData(alice.userId, msg)));
+    fifth.forEach(async data => {
+        console.log("Bob: ", decodeData<string>((await alice.open(data)).payload!));
+    });
 
+    //const testone = await Promise.all(Array(400).fill(0).map(() => alice.packData(bob.userId, decodeBase64(crypto.randomBytes(64)))));
     //console.log(((await bob.open(testone[350])).payload));
 });
