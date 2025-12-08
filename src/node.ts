@@ -157,13 +157,15 @@ export class FreeSignalNode {
      */
     public async open(datagram: Datagram | Uint8Array): Promise<{
         header: DatagramHeader,
-        payload?: Uint8Array
+        payload?: Uint8Array,
+        datagram?: Datagram
     }> {
         if (datagram instanceof Uint8Array)
             datagram = Datagram.from(datagram);
         let out: {
             header: DatagramHeader,
-            payload?: Uint8Array
+            payload?: Uint8Array,
+            datagram?: Datagram
         } = {
             header: DatagramHeader.from(datagram.header)
         };
@@ -214,11 +216,11 @@ export class FreeSignalNode {
                         };
                     }
                     const response: DiscoverMessage = { type: DiscoverType.RESPONSE, discoverId: message.discoverId, data };
-                    out.payload = (await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response))).toBytes();
+                    out.datagram = await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response));
                 } else if (message.type === DiscoverType.RESPONSE && this.discovers.has(message.discoverId)) {
                     this.discovers.delete(message.discoverId);
                     if (message.data)
-                        out.payload = encodeData(message.data);
+                        out.datagram = await this.packHandshake(message.data);
                 }
                 return out;
 
@@ -231,13 +233,11 @@ export class FreeSignalNode {
                     await this.bootstraps.set(datagram.sender, request);
                     this.onRequest(request);
                 };
-                const request = await this.bootstraps.get(datagram.sender);
-                if (request) {
-                    const data = await request.get()
-                    if (data)
-                        out.payload = encodeData(data);
-                }
+                const bootstrap = await (await this.bootstraps.get(datagram.sender))?.get();
+                if (bootstrap)
+                    out.datagram = await this.packHandshake(bootstrap);
                 return out;
+
             default:
                 throw new Error("Invalid protocol");
         }
