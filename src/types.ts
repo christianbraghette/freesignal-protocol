@@ -568,7 +568,7 @@ export class AsyncMap<K, V> implements LocalStorage<K, V> {
         return this.map.clear();
     }
 
-    async entries(): Promise<Iterator<[K, V]>> {
+    async entries(): Promise<Iterable<[K, V]>> {
         return this.map.entries();
     }
 }

@@ -282,7 +282,7 @@ class SessionMap implements LocalStorage<string, KeySession> {
         return this.storage.clear();
     }
 
-    public entries(): Promise<Iterator<[string, KeySession]>> {
+    public entries(): Promise<Iterable<[string, KeySession]>> {
         throw new Error("Method not implemented.");
     }
 }
