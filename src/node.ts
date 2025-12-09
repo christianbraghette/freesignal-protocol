@@ -23,6 +23,7 @@ import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
 import { decodeData, encodeBase64, encodeData, compareBytes } from "@freesignal/utils";
+import crypto from "@freesignal/crypto";
 
 export class BootstrapRequest {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
@@ -54,7 +55,6 @@ export class BootstrapRequest {
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
     protected readonly sessions: SessionMap;
-    protected readonly users: LocalStorage<string, IdentityKey>;
     protected readonly bundles: LocalStorage<string, KeyExchangeDataBundle>;
     protected readonly keyExchange: KeyExchange;
     protected readonly discovers: Set<string> = new Set();
@@ -63,14 +63,12 @@ export class FreeSignalNode {
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
         keyExchange: LocalStorage<string, Crypto.KeyPair>,
-        users: LocalStorage<string, IdentityKey>,
         bundles: LocalStorage<string, KeyExchangeDataBundle>,
         bootstraps: LocalStorage<string, BootstrapRequest>
     }>, privateIdentityKey?: PrivateIdentityKey) {
         this.privateIdentityKey = privateIdentityKey ?? createIdentity();
         this.sessions = new SessionMap(storage.sessions);
         this.keyExchange = new KeyExchange(storage.keyExchange, this.privateIdentityKey);
-        this.users = storage.users;
         this.bundles = storage.bundles;
         this.bootstraps = storage.bootstraps;
     }
@@ -100,11 +98,18 @@ export class FreeSignalNode {
         return new Datagram(this.userId.toString(), receiverId, protocol, encrypted).sign(this.privateIdentityKey.signatureKey);
     }
 
-    public async packHandshake(data: KeyExchangeData): Promise<Datagram> {
-        const { session, message, identityKey } = await this.keyExchange.digestData(data, encodeData(await this.keyExchange.generateBundle()));
-        const remoteId = UserId.fromKey(identityKey);
-        await this.users.set(remoteId.toString(), identityKey);
-        await this.sessions.set(remoteId.toString(), session);
+    public async packHandshake(data: KeyExchangeData): Promise<Datagram>
+    public async packHandshake(receiverId: string | UserId): Promise<Datagram>
+    public async packHandshake(data: KeyExchangeData | string | UserId): Promise<Datagram> {
+        if (typeof data === 'string' || data instanceof UserId) {
+            const userId = data.toString();
+            const identityKey = (await this.sessions.get(userId))?.identityKey;
+            if (!identityKey)
+                throw new Error("Missing user");
+            return await this.encrypt(userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(identityKey.exchangeKey, this.privateIdentityKey.exchangeKey))
+        }
+        const { session, message } = await this.keyExchange.digestData(data, encodeData(await this.keyExchange.generateBundle()));
+        await this.sessions.set(session.userId.toString(), session);
         return new Datagram(this.userId.toString(), UserId.fromKey(data.identityKey).toString(), Protocols.HANDSHAKE, encodeData(message)).sign(this.privateIdentityKey.signatureKey);
     }
 
@@ -134,10 +139,10 @@ export class FreeSignalNode {
     }
 
     protected async decrypt(datagram: Datagram): Promise<Uint8Array> {
-        const signatureKey = await this.users.get(datagram.sender);
-        if (!signatureKey)
+        const identityKey = (await this.sessions.get(datagram.sender))?.identityKey;
+        if (!identityKey)
             throw new Error("User IdentityKey not found");
-        if (!Datagram.verify(datagram, signatureKey.signatureKey))
+        if (!Datagram.verify(datagram, identityKey.signatureKey))
             throw new Error("Signature not verified");
         const session = await this.sessions.get(datagram.sender);
         if (!session)
@@ -173,14 +178,24 @@ export class FreeSignalNode {
             case Protocols.HANDSHAKE:
                 if (!datagram.payload)
                     throw new Error("Missing payload");
+                if (await this.sessions.has(datagram.sender)) {
+                    const payload = await this.decrypt(datagram);
+                    const identityKey = (await this.sessions.get(datagram.sender))?.identityKey;
+                    if (!identityKey)
+                        throw new Error("Missing user");
+                    if (!compareBytes(payload, crypto.ECDH.scalarMult(identityKey.exchangeKey, this.privateIdentityKey.exchangeKey)))
+                        throw new Error("Error validating handshake data");
+                    return out;
+                }
                 const data = decodeData<KeyExchangeSynMessage>(datagram.payload);
                 if (!Datagram.verify(datagram, IdentityKey.from(data.identityKey).signatureKey))
                     throw new Error("Signature not verified");
-                const { session, identityKey, associatedData } = await this.keyExchange.digestMessage(data);
-                const userId = UserId.fromKey(identityKey);
-                await this.users.set(userId.toString(), identityKey);
-                await this.sessions.set(userId.toString(), session);
-                await this.bundles.set(userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
+                const { session, associatedData } = await this.keyExchange.digestMessage(data);
+                await this.sessions.set(session.userId.toString(), session);
+                await this.bundles.set(session.userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
+                out.datagram = await this.packHandshake(session.userId);
+                if (!out.datagram)
+                    throw new Error("Error during handshake");
                 return out;
 
             case Protocols.MESSAGE:
@@ -193,7 +208,7 @@ export class FreeSignalNode {
 
             case Protocols.DISCOVER:
                 const message = decodeData<DiscoverMessage>(await this.decrypt(datagram));
-                if (message.type === DiscoverType.REQUEST && message.discoverId && !(await this.users.has(message.discoverId))) {
+                if (message.type === DiscoverType.REQUEST && message.discoverId && !(await this.sessions.has(message.discoverId))) {
                     let data: KeyExchangeData;
                     if (message.discoverId === this.userId.toString()) {
                         data = await this.keyExchange.generateData();

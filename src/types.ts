@@ -76,8 +76,8 @@ export class UserId implements Encodable {
     public static fromKey(identityKey: string | Uint8Array | IdentityKey): UserId {
         if (typeof identityKey === 'string')
             identityKey = encodeBase64(identityKey);
-        else if (IdentityKey.isIdentityKeys(identityKey))
-            identityKey = (identityKey as IdentityKey).toBytes();
+        else if (identityKey instanceof IdentityKey)
+            identityKey = (identityKey).toBytes();
         return new UserId(crypto.hkdf(identityKey as Uint8Array, new Uint8Array(32).fill(0), "/freesignal/userid"));
     }
 
@@ -88,141 +88,123 @@ export class UserId implements Encodable {
     }
 }
 
-export interface IdentityKey extends Encodable {
-    readonly info: number;
-    readonly signatureKey: Uint8Array;
-    readonly exchangeKey: Uint8Array;
-}
-export namespace IdentityKey {
-    export const keyLength = crypto.EdDSA.publicKeyLength + crypto.ECDH.publicKeyLength + 1;
-    const info = 0x70;
-    export const version = 1;
+export class IdentityKey implements Encodable {
+    public static readonly keyLength = crypto.EdDSA.publicKeyLength + crypto.ECDH.publicKeyLength + 1;
+    public static readonly version = 1;
+    private static readonly info = 0x70;
 
-    class IdentityKeyConstructor implements IdentityKey, Encodable {
-        public readonly info: number;
-        public readonly signatureKey: Uint8Array;
-        public readonly exchangeKey: Uint8Array;
+    public readonly info: number;
+    public readonly signatureKey: Uint8Array;
+    public readonly exchangeKey: Uint8Array;
 
-        constructor(identityKey: IdentityKey | Uint8Array | string) {
-            if (identityKey instanceof IdentityKeyConstructor) {
-                this.info = identityKey.info;
-                this.signatureKey = identityKey.signatureKey;
-                this.exchangeKey = identityKey.exchangeKey;
-            } else {
-                if (typeof identityKey === 'string')
-                    identityKey = encodeBase64(identityKey);
-                if (!isIdentityKeys(identityKey))
-                    throw new Error("Invalid key length");
-                this.info = (identityKey as Uint8Array)[0];
-                this.signatureKey = (identityKey as Uint8Array).subarray(1, crypto.EdDSA.publicKeyLength + 1);
-                this.exchangeKey = (identityKey as Uint8Array).subarray(crypto.EdDSA.publicKeyLength + 1, keyLength);
-            }
-        }
-
-        get userId() {
-            return UserId.fromKey(this.toBytes()).toString();
-        }
-
-        toBytes(): Uint8Array {
-            return concatBytes(numberToBytes(this.info, 1), this.signatureKey, this.exchangeKey);
-        }
-
-        toString(): string {
-            return decodeBase64(this.toBytes());
-        }
-
-        toJSON(): string {
-            return this.toString();
+    constructor(identityKey: IdentityKey | Uint8Array | string) {
+        if (identityKey instanceof IdentityKey) {
+            this.info = identityKey.info;
+            this.signatureKey = identityKey.signatureKey;
+            this.exchangeKey = identityKey.exchangeKey;
+        } else {
+            if (typeof identityKey === 'string')
+                identityKey = encodeBase64(identityKey);
+            if (identityKey.length !== IdentityKey.keyLength)
+                throw new Error("Invalid key length");
+            this.info = (identityKey as Uint8Array)[0];
+            this.signatureKey = (identityKey as Uint8Array).subarray(1, crypto.EdDSA.publicKeyLength + 1);
+            this.exchangeKey = (identityKey as Uint8Array).subarray(crypto.EdDSA.publicKeyLength + 1, IdentityKey.keyLength);
         }
     }
 
-    export function isIdentityKeys(obj: any): boolean {
-        return (obj instanceof Uint8Array && obj.length === keyLength) || obj instanceof IdentityKeyConstructor;
+    get userId() {
+        return UserId.fromKey(this.toBytes());
     }
 
-    export function from(identityKey: IdentityKey | Uint8Array | string): IdentityKey
-    export function from(signatureKey: Uint8Array | string, exchangeKey: Uint8Array | string): IdentityKey
-    export function from(...keys: (IdentityKey | Uint8Array | string)[]): IdentityKey {
+    toBytes(): Uint8Array {
+        return concatBytes(numberToBytes(this.info, 1), this.signatureKey, this.exchangeKey);
+    }
+
+    toString(): string {
+        return decodeBase64(this.toBytes());
+    }
+
+    toJSON(): string {
+        return this.toString();
+    }
+
+    public static from(identityKey: IdentityKey | Uint8Array | string): IdentityKey
+    public static from(signatureKey: Uint8Array | string, exchangeKey: Uint8Array | string): IdentityKey
+    public static from(...keys: (IdentityKey | Uint8Array | string)[]): IdentityKey {
         keys = keys.map(key => {
-            if (key instanceof IdentityKeyConstructor)
+            if (key instanceof IdentityKey)
                 return key.toBytes();
             else if (typeof key === 'string')
                 return encodeBase64(key);
             else
                 return key as Uint8Array;
         });
-        return new IdentityKeyConstructor(keys.length === 2 ? concatBytes(numberToBytes(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
+        return new IdentityKey(keys.length === 2 ? concatBytes(numberToBytes(IdentityKey.info + IdentityKey.version, 1), ...keys as Uint8Array[]) : keys[0]);
     }
 }
 
-export interface PrivateIdentityKey {
-    readonly info: number;
-    readonly signatureKey: Uint8Array;
-    readonly exchangeKey: Uint8Array;
-    readonly identityKey: IdentityKey;
-}
-export namespace PrivateIdentityKey {
-    export const keyLength = crypto.EdDSA.secretKeyLength + crypto.ECDH.secretKeyLength + 1;
-    const info = 0x4E;
-    export const version = 1;
+export class PrivateIdentityKey implements Encodable {
+    public static readonly keyLength = crypto.EdDSA.secretKeyLength + crypto.ECDH.secretKeyLength + 1;
+    public static readonly version = 1;
+    private static readonly info = 0x4E;
 
-    class PrivateIdentityKeyConstructor implements PrivateIdentityKey, Encodable {
-        public readonly info: number;
-        public readonly signatureKey: Uint8Array;
-        public readonly exchangeKey: Uint8Array;
-        public readonly identityKey: IdentityKey;
 
-        constructor(privateIdentityKey: PrivateIdentityKey | Uint8Array | string) {
-            if (privateIdentityKey instanceof PrivateIdentityKeyConstructor) {
-                this.info = privateIdentityKey.info;
-                this.signatureKey = privateIdentityKey.signatureKey;
-                this.exchangeKey = privateIdentityKey.exchangeKey;
-                this.identityKey = privateIdentityKey.identityKey;
-            } else {
-                if (typeof privateIdentityKey === 'string')
-                    privateIdentityKey = encodeBase64(privateIdentityKey);
-                if (!isIdentityKeys(privateIdentityKey))
-                    throw new Error("Invalid key length");
-                this.info = (privateIdentityKey as Uint8Array)[0];
-                this.signatureKey = (privateIdentityKey as Uint8Array).subarray(1, crypto.EdDSA.secretKeyLength + 1);
-                this.exchangeKey = (privateIdentityKey as Uint8Array).subarray(crypto.EdDSA.secretKeyLength + 1, keyLength);
-                this.identityKey = IdentityKey.from(crypto.EdDSA.keyPair(this.signatureKey).publicKey, crypto.ECDH.keyPair(this.exchangeKey).publicKey);
-            }
-        }
+    public readonly info: number;
+    public readonly signatureKey: Uint8Array;
+    public readonly exchangeKey: Uint8Array;
+    public readonly identityKey: IdentityKey;
 
-        get userId() {
-            return UserId.fromKey(this.identityKey.toBytes()).toString();
-        }
-
-        toBytes(): Uint8Array {
-            return concatBytes(numberToBytes(this.info, 1), this.signatureKey, this.exchangeKey);
-        }
-
-        toString(): string {
-            return decodeBase64(this.toBytes());
-        }
-
-        toJSON(): string {
-            return this.toString();
+    constructor(privateIdentityKey: PrivateIdentityKey | Uint8Array | string) {
+        if (privateIdentityKey instanceof PrivateIdentityKey) {
+            this.info = privateIdentityKey.info;
+            this.signatureKey = privateIdentityKey.signatureKey;
+            this.exchangeKey = privateIdentityKey.exchangeKey;
+            this.identityKey = privateIdentityKey.identityKey;
+        } else {
+            if (typeof privateIdentityKey === 'string')
+                privateIdentityKey = encodeBase64(privateIdentityKey);
+            if (!PrivateIdentityKey.isIdentityKeys(privateIdentityKey))
+                throw new Error("Invalid key length");
+            this.info = (privateIdentityKey as Uint8Array)[0];
+            this.signatureKey = (privateIdentityKey as Uint8Array).subarray(1, crypto.EdDSA.secretKeyLength + 1);
+            this.exchangeKey = (privateIdentityKey as Uint8Array).subarray(crypto.EdDSA.secretKeyLength + 1, PrivateIdentityKey.keyLength);
+            this.identityKey = IdentityKey.from(crypto.EdDSA.keyPair(this.signatureKey).publicKey, crypto.ECDH.keyPair(this.exchangeKey).publicKey);
         }
     }
 
-    export function isIdentityKeys(obj: any): boolean {
-        return (obj instanceof Uint8Array && obj.length === keyLength) || obj instanceof PrivateIdentityKeyConstructor;
+    get userId() {
+        return UserId.fromKey(this.identityKey.toBytes()).toString();
     }
 
-    export function from(identityKey: PrivateIdentityKey | Uint8Array | string): PrivateIdentityKey
-    export function from(signatureKey: Uint8Array | string, exchangeKey: Uint8Array | string): PrivateIdentityKey
-    export function from(...keys: (PrivateIdentityKey | Uint8Array | string)[]): PrivateIdentityKey {
+    toBytes(): Uint8Array {
+        return concatBytes(numberToBytes(this.info, 1), this.signatureKey, this.exchangeKey);
+    }
+
+    toString(): string {
+        return decodeBase64(this.toBytes());
+    }
+
+    toJSON(): string {
+        return this.toString();
+    }
+
+    public static isIdentityKeys(obj: any): boolean {
+        return (obj instanceof Uint8Array && obj.length === PrivateIdentityKey.keyLength) || obj instanceof PrivateIdentityKey;
+    }
+
+    public static from(identityKey: PrivateIdentityKey | Uint8Array | string): PrivateIdentityKey
+    public static from(signatureKey: Uint8Array | string, exchangeKey: Uint8Array | string): PrivateIdentityKey
+    public static from(...keys: (PrivateIdentityKey | Uint8Array | string)[]): PrivateIdentityKey {
         keys = keys.map(key => {
-            if (key instanceof PrivateIdentityKeyConstructor)
+            if (key instanceof PrivateIdentityKey)
                 return key.toBytes();
             else if (typeof key === 'string')
                 return encodeBase64(key);
             else
                 return key as Uint8Array;
         });
-        return new PrivateIdentityKeyConstructor(keys.length === 2 ? concatBytes(numberToBytes(info + version, 1), ...keys as Uint8Array[]) : keys[0]);
+        return new PrivateIdentityKey(keys.length === 2 ? concatBytes(numberToBytes(PrivateIdentityKey.info + PrivateIdentityKey.version, 1), ...keys as Uint8Array[]) : keys[0]);
     }
 }
 
@@ -284,7 +266,7 @@ export interface SignedDatagram extends Datagram {
 }
 
 export class DatagramHeader implements Encodable {
-    private static offset = 26 + crypto.EdDSA.publicKeyLength * 2;
+    public static readonly headerLength = 26 + crypto.EdDSA.publicKeyLength * 2;
 
     readonly id: string;
     readonly version: number;
@@ -299,14 +281,14 @@ export class DatagramHeader implements Encodable {
         this.id = crypto.UUID.stringify(data.subarray(2, 18));
         this.createdAt = bytesToNumber(data.subarray(18, 26));
         this.sender = decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
-        this.receiver = decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramHeader.offset));
+        this.receiver = decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramHeader.headerLength));
     }
 
     public toBytes(): Uint8Array {
         return concatBytes(
             numberToBytes(this.version, 1),
             Protocols.encode(this.protocol, 1),
-            crypto.UUID.parse(this.protocol),
+            crypto.UUID.parse(this.id),
             numberToBytes(this.createdAt, 8),
             encodeBase64(this.sender),
             encodeBase64(this.receiver)
@@ -331,8 +313,6 @@ export class Datagram implements Encodable, DatagramHeader {
     private _createdAt: number;
     private _payload?: Uint8Array;
     private _signature?: Uint8Array;
-
-    private static headerOffset = 26 + crypto.EdDSA.publicKeyLength * 2;
 
     public constructor(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable) {
         this._id = crypto.UUID.generate().toString();
@@ -376,7 +356,7 @@ export class Datagram implements Encodable, DatagramHeader {
     }
 
     get header(): Uint8Array {
-        return this.toBytes().slice(0, Datagram.headerOffset);
+        return this.toBytes().slice(0, DatagramHeader.headerLength);
     }
 
     public toBytes(): Uint8Array {
@@ -430,9 +410,9 @@ export class Datagram implements Encodable, DatagramHeader {
         if (data instanceof Uint8Array) {
             const datagram = new Datagram(
                 decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength)),
-                decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, Datagram.headerOffset)),
+                decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramHeader.headerLength)),
                 Protocols.decode(data.subarray(1, 2)),
-                data.subarray(Datagram.headerOffset, data.length - (data[0] & 128 ? crypto.EdDSA.signatureLength : 0))
+                data.subarray(DatagramHeader.headerLength, data.length - (data[0] & 128 ? crypto.EdDSA.signatureLength : 0))
             );
             datagram._version = data[0] & 127;
             datagram._id = crypto.UUID.stringify(data.subarray(2, 18));

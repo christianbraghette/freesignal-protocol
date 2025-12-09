@@ -20,8 +20,10 @@
 import crypto from "@freesignal/crypto";
 import { Crypto } from "@freesignal/interfaces";
 import { decodeBase64, encodeBase64, compareBytes } from "@freesignal/utils";
+import { IdentityKey, UserId } from "./types";
 
 export interface ExportedKeySession {
+    identityKey: string;
     secretKey: string;
     rootKey?: string;
     sendingChain?: ExportedKeyChain;
@@ -51,6 +53,7 @@ export class KeySession {
     public static readonly maxCount = 65536;
 
     public readonly id: string;
+    public readonly identityKey: IdentityKey;
 
     private keyPair: Crypto.KeyPair;
     private rootKey?: Uint8Array;
@@ -60,7 +63,8 @@ export class KeySession {
     private previousKeys = new KeyMap<string, Uint8Array>();
 
     //headerKey?: Uint8Array, nextHeaderKey?: Uint8Array,
-    public constructor(opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array, } = {}) {
+    public constructor(identityKey: IdentityKey, opts: { id?: string, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array } = {}) {
+        this.identityKey = identityKey;
         this.id = opts.id ?? crypto.UUID.generate().toString();
         this.keyPair = crypto.ECDH.keyPair(opts.secretKey);
         if (opts.rootKey)
@@ -71,6 +75,10 @@ export class KeySession {
         if (opts.remoteKey) {
             this.sendingChain = this.getChain(opts.remoteKey);//, opts.headerKey);
         }
+    }
+
+    public get userId(): UserId {
+        return this.identityKey.userId;
     }
 
     private getChain(remoteKey: Uint8Array, headerKey?: Uint8Array, previousCount?: number): KeyChain {
@@ -145,6 +153,7 @@ export class KeySession {
      */
     public toJSON(): ExportedKeySession {
         return {
+            identityKey: this.identityKey.toString(),
             secretKey: decodeBase64(this.keyPair.secretKey),
             rootKey: this.rootKey ? decodeBase64(this.rootKey) : undefined,
             sendingChain: this.sendingChain?.toJSON(),
@@ -160,7 +169,7 @@ export class KeySession {
      * @returns session with the state parsed.
      */
     public static from(data: ExportedKeySession): KeySession {
-        const session = new KeySession({ secretKey: encodeBase64(data.secretKey), rootKey: data.rootKey ? encodeBase64(data.rootKey) : undefined });
+        const session = new KeySession(IdentityKey.from(data.identityKey), { secretKey: encodeBase64(data.secretKey), rootKey: data.rootKey ? encodeBase64(data.rootKey) : undefined });
         session.sendingChain = data.sendingChain ? KeyChain.from(data.sendingChain) : undefined;
         session.receivingChain = data.receivingChain ? KeyChain.from(data.receivingChain) : undefined;
         session.previousKeys = new KeyMap(data.previousKeys);
