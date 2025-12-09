@@ -85,6 +85,7 @@ export class KeyExchange {
     }
 
     public async digestData(message: KeyExchangeData, associatedData?: Uint8Array): Promise<{ session: KeySession; message: KeyExchangeSynMessage; }> {
+        //console.debug("Digest Data")
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = encodeBase64(message.signedPreKey);
         const identityKey = IdentityKey.from(message.identityKey);
@@ -98,9 +99,9 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, identityKey.exchangeKey),
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, signedPreKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
-        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 2);
-        //, headerKey: derivedKey.subarray(KeySession.keyLength)
-        const session = new KeySession(identityKey, { remoteKey: identityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
+        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 3);
+        //, headerKey: derivedKey.subarray(KeySession.keyLength, KeySession.keyLength * 2), nextHeaderKey: derivedKey.subarray(KeySession.keyLength * 2)
+        const session = new KeySession({ identityKey, remoteKey: identityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
         const encrypted = encryptData(session, concatBytes(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
         if (!encrypted)
             throw new Error("Decryption error");
@@ -119,6 +120,7 @@ export class KeyExchange {
     }
 
     public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, associatedData: Uint8Array }> {
+        //console.debug("Digest Message")
         const signedPreKey = await this.storage.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
         const onetimePreKey = await this.storage.get(hash);
@@ -133,9 +135,9 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, ephemeralKey),
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, ephemeralKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
-        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 2);
-        //, nextHeaderKey: derivedKey.subarray(KeySession.keyLength)
-        const session = new KeySession(identityKey, { secretKey: this.privateIdentityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
+        ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 3);
+        //nextHeaderKey: derivedKey.subarray(KeySession.keyLength, KeySession.keyLength * 2), headerKey: derivedKey.subarray(KeySession.keyLength * 2)
+        const session = new KeySession({ identityKey, secretKey: this.privateIdentityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
         const data = decryptData(session, encodeBase64(message.associatedData));
         if (!data)
             throw new Error("Error decrypting ACK message");

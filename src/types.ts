@@ -22,14 +22,14 @@ import crypto from "@freesignal/crypto";
 import type { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptionKeys, KeySession } from "./double-ratchet";
 
-export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
-    //console.log(session.id, ' Sending: ', decodeBase64(session.getHeaderKeys().sending ?? new Uint8Array()));
+/*export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
     const key = session.getSendingKey();
     if (!key)
         throw new Error("Error generating key");
     const nonce = crypto.randomBytes(EncryptionHeader.nonceLength);
     const ciphertext = crypto.box.encrypt(data, nonce, key.secretKey);
     const headerKey = session.getHeaderKeys().sending;
+    //console.debug(session.userId.toString(), "Sending: ", decodeBase64(headerKey ?? new Uint8Array()))
     let header = new EncryptionHeader(key, nonce).toBytes();
     const headerNonce = crypto.randomBytes(EncryptionHeader.nonceLength)
     if (headerKey)
@@ -39,16 +39,51 @@ export function encryptData(session: KeySession, data: Uint8Array): EncryptedDat
 }
 
 export function decryptData(session: KeySession, encryptedData: Uint8Array): Uint8Array {
-    //console.log(session.id, ' Receiving: ', decodeBase64(session.getHeaderKeys().receiving ?? new Uint8Array()));
     const encrypted = EncryptedData.from(encryptedData);
     const headerKey = session.getHeaderKeys().receiving;
-    let headerData: Uint8Array | undefined = encrypted.header;
-    if (headerKey) {
-        headerData = crypto.box.decrypt(headerData, encrypted.nonce, headerKey);
+    const nextHeaderKey = session.getHeaderKeys().nextReciving;
+    let headerData: Uint8Array | undefined;
+    try {
+        if (!headerKey)
+            throw new Error("Error generating key");
+        headerData = crypto.box.decrypt(encrypted.header, encrypted.nonce, headerKey);
         if (!headerData)
             throw new Error("Error calculating header");
+        //console.debug(session.userId.toString(), "Receiving: ", decodeBase64(session.getHeaderKeys().receiving ?? new Uint8Array()))
+    } catch {
+        if (!nextHeaderKey)
+            throw new Error("Error generating key");
+        headerData = crypto.box.decrypt(encrypted.header, encrypted.nonce, nextHeaderKey);
+        if (!headerData) {
+            //console.debug(session.toJSON());
+            throw new Error("Error calculating header");
+        }
+        //console.debug(session.userId.toString(), "NextReceiving: ", decodeBase64(session.getHeaderKeys().nextReciving ?? new Uint8Array()))
     }
-    const header = EncryptionHeader.from(headerData);
+    const header = EncryptionHeader.from(headerData!);
+    const key = session.getReceivingKey(header);
+    if (!key)
+        throw new Error("Error calculating key");
+    const decrypted = crypto.box.decrypt(encrypted.payload, header.nonce, key);
+    if (!decrypted)
+        throw new Error("Error decrypting data");
+    return decrypted;
+}*/
+
+export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
+    const key = session.getSendingKey();
+    if (!key)
+        throw new Error("Error generating key");
+    const nonce = crypto.randomBytes(EncryptionHeader.nonceLength);
+    const ciphertext = crypto.box.encrypt(data, nonce, key.secretKey);
+    let header = new EncryptionHeader(key, nonce).toBytes();
+    const test = new EncryptedData(header, crypto.randomBytes(EncryptionHeader.nonceLength), ciphertext);
+    return test;
+}
+
+export function decryptData(session: KeySession, encryptedData: Uint8Array): Uint8Array {
+    const encrypted = EncryptedData.from(encryptedData);
+    const header = EncryptionHeader.from(encrypted.header);
     const key = session.getReceivingKey(header);
     if (!key)
         throw new Error("Error calculating key");

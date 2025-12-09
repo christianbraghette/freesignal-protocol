@@ -28,17 +28,17 @@ import crypto from "@freesignal/crypto";
 export class BootstrapRequest {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
 
-    public constructor(public readonly senderId: UserId | string, private readonly data: KeyExchangeData) { }
+    public constructor(public readonly senderId: UserId | string, private readonly datagram: Datagram) { }
 
     public get status() {
         return this.#status;
     }
 
-    public async get(): Promise<KeyExchangeData | undefined> {
-        return this.#status === 'accepted' ? this.data : undefined;
+    public async get(): Promise<Datagram | undefined> {
+        return this.#status === 'accepted' ? this.datagram : undefined;
     }
 
-    public async accept(): Promise<KeyExchangeData | undefined> {
+    public async accept(): Promise<Datagram | undefined> {
         if (this.status === 'pending')
             this.#status = 'accepted';
         return await this.get();
@@ -83,7 +83,7 @@ export class FreeSignalNode {
 
     public onRequest: (request: BootstrapRequest) => void = () => { };
 
-    public async getRequest(userId: string): Promise<KeyExchangeData | undefined> {
+    public async getRequest(userId: string): Promise<Datagram | undefined> {
         return (await this.bootstraps.get(userId))?.get();
     }
 
@@ -102,26 +102,32 @@ export class FreeSignalNode {
     public async packHandshake(receiverId: string | UserId): Promise<Datagram>
     public async packHandshake(data: KeyExchangeData | string | UserId): Promise<Datagram> {
         if (typeof data === 'string' || data instanceof UserId) {
+            //console.debug("Packing Handshake Ack");
             const userId = data.toString();
             const identityKey = (await this.sessions.get(userId))?.identityKey;
             if (!identityKey)
                 throw new Error("Missing user");
-            return await this.encrypt(userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(identityKey.exchangeKey, this.privateIdentityKey.exchangeKey))
+            const res = await this.encrypt(userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey))
+            return res;
         }
+        //console.debug("Packing Handshake Syn");
         const { session, message } = await this.keyExchange.digestData(data, encodeData(await this.keyExchange.generateBundle()));
         await this.sessions.set(session.userId.toString(), session);
         return new Datagram(this.userId.toString(), UserId.fromKey(data.identityKey).toString(), Protocols.HANDSHAKE, encodeData(message)).sign(this.privateIdentityKey.signatureKey);
     }
 
     public packData<T>(receiverId: string | UserId, data: T): Promise<Datagram> {
+        //console.debug("Packing Data");
         return this.encrypt(receiverId, Protocols.MESSAGE, encodeData(data));
     }
 
     public packRelay(receiverId: string | UserId, data: Datagram): Promise<Datagram> {
+        //console.debug("Packing Relay");
         return this.encrypt(receiverId, Protocols.RELAY, encodeData(data));
     }
 
     public async packDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<Datagram> {
+        //console.debug("Packing Discover");
         if (receiverId instanceof UserId)
             receiverId = receiverId.toString();
         if (discoverId instanceof UserId)
@@ -135,7 +141,13 @@ export class FreeSignalNode {
     }
 
     public async packBootstrap(receiverId: string | UserId) {
+        //console.debug("Packing Bootstrap");
         return new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
+    }
+
+    public async packGetBootstrap(receiverId: string | UserId) {
+        //console.debug("Packing GetBootstrap");
+        return new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP);
     }
 
     protected async decrypt(datagram: Datagram): Promise<Uint8Array> {
@@ -179,14 +191,16 @@ export class FreeSignalNode {
                 if (!datagram.payload)
                     throw new Error("Missing payload");
                 if (await this.sessions.has(datagram.sender)) {
+                    //console.debug("Opening Handshake Ack");
                     const payload = await this.decrypt(datagram);
                     const identityKey = (await this.sessions.get(datagram.sender))?.identityKey;
                     if (!identityKey)
                         throw new Error("Missing user");
-                    if (!compareBytes(payload, crypto.ECDH.scalarMult(identityKey.exchangeKey, this.privateIdentityKey.exchangeKey)))
+                    if (!compareBytes(payload, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey)))
                         throw new Error("Error validating handshake data");
                     return out;
                 }
+                //console.debug("Opening Handshake Syn");
                 const data = decodeData<KeyExchangeSynMessage>(datagram.payload);
                 if (!Datagram.verify(datagram, IdentityKey.from(data.identityKey).signatureKey))
                     throw new Error("Signature not verified");
@@ -199,14 +213,17 @@ export class FreeSignalNode {
                 return out;
 
             case Protocols.MESSAGE:
+                //console.debug("Opening Message");
                 out.payload = await this.decrypt(datagram);
                 return out;
 
             case Protocols.RELAY:
+                //console.debug("Opening Relay");
                 out.payload = await this.decrypt(datagram);
                 return out;
 
             case Protocols.DISCOVER:
+                //console.debug("Opening Discover");
                 const message = decodeData<DiscoverMessage>(await this.decrypt(datagram));
                 if (message.type === DiscoverType.REQUEST && message.discoverId && !(await this.sessions.has(message.discoverId))) {
                     let data: KeyExchangeData;
@@ -240,17 +257,18 @@ export class FreeSignalNode {
                 return out;
 
             case Protocols.BOOTSTRAP:
+                //console.debug("Opening Bootstrap");
                 if (datagram.payload) {
                     const data = decodeData<KeyExchangeData>(datagram.payload);
                     if (!compareBytes(UserId.fromKey(data.identityKey).toBytes(), encodeBase64(datagram.sender)))
                         new Error("Malicious bootstrap request");
-                    const request = new BootstrapRequest(datagram.sender, data);
+                    const request = new BootstrapRequest(datagram.sender, await this.packHandshake(data));
                     await this.bootstraps.set(datagram.sender, request);
                     this.onRequest(request);
                 };
-                const bootstrap = await (await this.bootstraps.get(datagram.sender))?.get();
-                if (bootstrap)
-                    out.datagram = await this.packHandshake(bootstrap);
+                const handshakeDatagram = await (await this.bootstraps.get(datagram.sender))?.get();
+                if (handshakeDatagram)
+                    out.datagram = handshakeDatagram;
                 return out;
 
             case Protocols.PING:

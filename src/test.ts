@@ -1,4 +1,4 @@
-import { decodeData } from "@freesignal/utils";
+import { compareBytes, decodeData } from "@freesignal/utils";
 import { AsyncMap, createNode, Datagram } from ".";
 
 console.log("FreeSignal protocol test");
@@ -7,22 +7,27 @@ const bob = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), 
 const alice = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
 
 setImmediate(async () => {
-    const bobBootstrap = await bob.packBootstrap(alice.userId)
+    const bobBootstrap = await bob.packBootstrap(alice.userId);
 
     alice.onRequest = (request) => { request.accept(); };
 
     const test = (await alice.open(bobBootstrap)).datagram;
-    console.log("Valid bootstrap: ", !!test);
-    const bobRequest = await alice.getRequest(bob.userId.toString());
-    if (!bobRequest)
+    const aliceHandshake = await alice.getRequest(bob.userId.toString());
+    if (!aliceHandshake)
         throw new Error("Bootstrap Failed");
-    const aliceHandshake = await alice.packHandshake(bobRequest);
 
-    await bob.open(aliceHandshake);
+    const bobHandshake = (await bob.open(aliceHandshake)).datagram;
+    if (!bobHandshake)
+        throw new Error("Handshake Failed");
+    
+    console.log(!!(await alice.open(bobHandshake)).header);
+
     const first = (await bob.packData(alice.userId, "Hi Alice!")).toBytes();
 
     console.log("Bob: ", decodeData<string>((await alice.open(first)).payload!));
     const second = await alice.packData(bob.userId, "Hi Bob!");
+
+    console.log("Test");
 
     console.log("Alice: ", decodeData<string>((await bob.open(second)).payload!));
     const third = await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bob.packData(alice.userId, msg)));
