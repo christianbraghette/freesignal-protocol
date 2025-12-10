@@ -20,8 +20,7 @@ bob.onMessage = (data) => console.log("Alice: ", decodeData<string>(data.payload
 //alice.onHandshaked = (userId) => console.log(userId.toString());
 alice.onSend = (data) => bob.open(data);
 alice.onMessage = (data) => console.log("Bob: ", decodeData<string>(data.payload));
-
-alice.requests.onRequest = (request) => request.accept();
+alice.onRequest = (request) => request.accept();
 
 setImmediate(async () => {
     await bob.sendBootstrap(alice.userId);
@@ -31,11 +30,4 @@ setImmediate(async () => {
     await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bob.sendData(alice.userId, msg)));
     await alice.sendData(bob.userId, "Not so bad my man");
     await Promise.all(["I'm thinking...", "His this secure?"].map(msg => bob.sendData(alice.userId, msg)));
-})
-
-/*process.stdin.resume();
-
-process.on('SIGINT', () => {
-    console.log("Exiting...");
-    process.exit(0);
-});*/
+});

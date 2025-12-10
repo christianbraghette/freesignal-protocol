@@ -61,7 +61,8 @@ export class BootstrapRequest extends EventEmitter<'change', BootstrapRequest> {
 type NodeEventData = {
     header: DatagramHeader,
     payload?: Uint8Array,
-    datagram?: Datagram
+    datagram?: Datagram,
+    request?: BootstrapRequest
 };
 
 type MessageEventData = {
@@ -76,7 +77,7 @@ export class FreeSignalNode {
     protected readonly keyExchange: KeyExchange;
     protected readonly discovers: Set<string> = new Set();
     protected readonly bootstraps: LocalStorage<string, BootstrapRequest>;
-    protected readonly emitter = new EventEmitter<'send' | 'handshaked' | 'message' | 'ping', NodeEventData>();
+    protected readonly emitter = new EventEmitter<'send' | 'handshake' | 'message' | 'ping' | 'bootstrap', NodeEventData>();
 
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
@@ -90,18 +91,30 @@ export class FreeSignalNode {
         this.bundles = storage.bundles;
         this.bootstraps = storage.bootstraps;
 
-        this.emitter.on('send', (data) => this.onSend(data.data!.datagram!.toBytes()));
-        this.emitter.on('handshaked', (data) => this.onHandshaked(UserId.from(data.data!.header.sender)));
+        this.emitter.on('message', this.messageHandler);
+        this.emitter.on('send', this.sendHandler);
+        this.emitter.on('handshake', this.handshakeHandler);
+        this.emitter.on('bootstrap', this.bootstrapHandler);
     }
+
+    protected messageHandler: EventCall<"message", NodeEventData> = (data) => this.onMessage({ header: data.data?.header!, payload: data.data?.payload! })
+    protected sendHandler: EventCall<"send", NodeEventData> = (data) => this.onSend(data.data!.datagram!.toBytes());
+    protected handshakeHandler: EventCall<"handshake", NodeEventData> = (data) => this.onHandshake(UserId.from(data.data!.header.sender));
+    protected bootstrapHandler: EventCall<"bootstrap", NodeEventData> = (data) => this.onRequest(data.data?.request!);
 
     public onMessage: (data: MessageEventData) => void = () => { };
     public onSend: (data: Uint8Array) => void = () => { };
-    public onHandshaked: (userId: UserId) => void = () => { };
+    public onHandshake: (userId: UserId) => void = () => { };
+    public onRequest: (request: BootstrapRequest) => void = () => { };
+
+    public getRequest(userId: string): Promise<BootstrapRequest | undefined> {
+        return this.bootstraps.get(userId);
+    }
 
     public async waitHandshaked(userId: UserId | string, timeout?: number): Promise<void> {
         if (timeout)
             setTimeout(() => { throw new Error(); }, timeout);
-        while ((await this.emitter.wait('handshaked', timeout))?.header.sender !== userId.toString());
+        while ((await this.emitter.wait('handshake', timeout))?.header.sender !== userId.toString());
     }
 
     public get identityKey(): IdentityKey {
@@ -111,17 +124,6 @@ export class FreeSignalNode {
     public get userId(): UserId {
         return this.identityKey.userId;
     }
-
-    public readonly requests: {
-        onRequest: (request: BootstrapRequest) => void;
-        getRequest: (userId: string) => Promise<BootstrapRequest | undefined>
-    } = {
-            onRequest: () => { },
-            getRequest: (userId: string): Promise<BootstrapRequest | undefined> => {
-                return this.bootstraps.get(userId);
-            }
-        }
-
     protected async encrypt(receiverId: string | UserId, protocol: Protocols, data: Uint8Array): Promise<Datagram> {
         if (receiverId instanceof UserId)
             receiverId = receiverId.toString();
@@ -188,6 +190,8 @@ export class FreeSignalNode {
 
     public async sendBootstrap(receiverId: string | UserId): Promise<void> {
         //console.debug("Sending Bootstrap");
+        if (await this.sessions.has(receiverId.toString()))
+            throw new Error("Session exists");
         const datagram = new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
         this.emitter.emit('send', { header: datagram.header, datagram });
     }
@@ -223,7 +227,7 @@ export class FreeSignalNode {
                         throw new Error("Missing user");
                     if (!compareBytes(payload, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey)))
                         throw new Error("Error validating handshake data");
-                    this.emitter.emit('handshaked', { header: datagram.header });
+                    this.emitter.emit('handshake', { header: datagram.header });
                     return;
                 }
                 //console.debug("Opening Handshake Syn");
@@ -234,7 +238,7 @@ export class FreeSignalNode {
                 await this.sessions.set(session.userId.toString(), session);
                 await this.bundles.set(session.userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
                 await this.sendHandshake(session.userId);
-                this.emitter.emit('handshaked', { header: datagram.header });
+                this.emitter.emit('handshake', { header: datagram.header });
                 return;
 
             case Protocols.MESSAGE:
@@ -295,7 +299,7 @@ export class FreeSignalNode {
                     this.sendHandshake(request.data);
                 }
                 await this.bootstraps.set(datagram.sender, request);
-                this.requests.onRequest(request);
+                this.emitter.emit('bootstrap', { header: datagram.header, request });
                 return;
 
             case Protocols.PING:
