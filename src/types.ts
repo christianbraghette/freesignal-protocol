@@ -22,68 +22,35 @@ import crypto from "@freesignal/crypto";
 import type { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptionKeys, KeySession } from "./double-ratchet";
 
-/*export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
-    const key = session.getSendingKey();
-    if (!key)
-        throw new Error("Error generating key");
-    const nonce = crypto.randomBytes(EncryptionHeader.nonceLength);
-    const ciphertext = crypto.box.encrypt(data, nonce, key.secretKey);
-    const headerKey = session.getHeaderKeys().sending;
-    //console.debug(session.userId.toString(), "Sending: ", decodeBase64(headerKey ?? new Uint8Array()))
-    let header = new EncryptionHeader(key, nonce).toBytes();
-    const headerNonce = crypto.randomBytes(EncryptionHeader.nonceLength)
-    if (headerKey)
-        header = crypto.box.encrypt(header, headerNonce, headerKey);
-    const test = new EncryptedData(header, headerNonce, ciphertext);
-    return test;
-}
-
-export function decryptData(session: KeySession, encryptedData: Uint8Array): Uint8Array {
-    const encrypted = EncryptedData.from(encryptedData);
-    const headerKey = session.getHeaderKeys().receiving;
-    const nextHeaderKey = session.getHeaderKeys().nextReciving;
-    let headerData: Uint8Array | undefined;
-    try {
-        if (!headerKey)
-            throw new Error("Error generating key");
-        headerData = crypto.box.decrypt(encrypted.header, encrypted.nonce, headerKey);
-        if (!headerData)
-            throw new Error("Error calculating header");
-        //console.debug(session.userId.toString(), "Receiving: ", decodeBase64(session.getHeaderKeys().receiving ?? new Uint8Array()))
-    } catch {
-        if (!nextHeaderKey)
-            throw new Error("Error generating key");
-        headerData = crypto.box.decrypt(encrypted.header, encrypted.nonce, nextHeaderKey);
-        if (!headerData) {
-            //console.debug(session.toJSON());
-            throw new Error("Error calculating header");
-        }
-        //console.debug(session.userId.toString(), "NextReceiving: ", decodeBase64(session.getHeaderKeys().nextReciving ?? new Uint8Array()))
-    }
-    const header = EncryptionHeader.from(headerData!);
-    const key = session.getReceivingKey(header);
-    if (!key)
-        throw new Error("Error calculating key");
-    const decrypted = crypto.box.decrypt(encrypted.payload, header.nonce, key);
-    if (!decrypted)
-        throw new Error("Error decrypting data");
-    return decrypted;
-}*/
-
 export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
     const key = session.getSendingKey();
     if (!key)
         throw new Error("Error generating key");
     const nonce = crypto.randomBytes(EncryptionHeader.nonceLength);
-    const ciphertext = crypto.box.encrypt(data, nonce, key.secretKey);
+    const payload = crypto.box.encrypt(data, nonce, key.secretKey);
     let header = new EncryptionHeader(key, nonce).toBytes();
-    const test = new EncryptedData(header, crypto.randomBytes(EncryptionHeader.nonceLength), ciphertext);
-    return test;
+    const headerKey = session.getHeaderKey();
+    if (!headerKey)
+        return new EncryptedData({ header, payload });
+    const headerNonce = crypto.randomBytes(EncryptionHeader.nonceLength)
+    if (headerKey)
+        header = crypto.box.encrypt(header, headerNonce, headerKey);
+    return new EncryptedData({ hashkey: crypto.hash(headerKey ?? new Uint8Array(32).fill(0)), header, nonce: headerNonce, payload });
 }
 
 export function decryptData(session: KeySession, encryptedData: Uint8Array): Uint8Array {
     const encrypted = EncryptedData.from(encryptedData);
-    const header = EncryptionHeader.from(encrypted.header);
+    let headerData: Uint8Array = encrypted.header;
+    if (encrypted.hashkey && encrypted.nonce) {
+        const headerKey = session.getHeaderKey(decodeBase64(encrypted.hashkey));
+        if (!headerKey)
+            throw new Error("Error getting key");
+        const data = crypto.box.decrypt(encrypted.header, encrypted.nonce, headerKey);
+        if (!data)
+            throw new Error("Error calculating header");
+        headerData = data;
+    }
+    const header = EncryptionHeader.from(headerData);
     const key = session.getReceivingKey(header);
     if (!key)
         throw new Error("Error calculating key");
@@ -502,11 +469,12 @@ export class EncryptionHeader implements EncryptionKeys, Encodable {
     public static from(data: Uint8Array | EncryptionHeader): EncryptionHeader {
         if (data instanceof EncryptionHeader)
             data = data.toBytes();
+        let offset = 0;
         return new EncryptionHeader({
-            count: bytesToNumber(data.subarray(0, EncryptionHeader.countLength)),
-            previous: bytesToNumber(data.subarray(EncryptionHeader.countLength, EncryptionHeader.countLength * 2)),
-            publicKey: data.subarray(EncryptionHeader.countLength * 2, EncryptionHeader.countLength * 2 + EncryptionHeader.keyLength)
-        }, data.subarray(EncryptionHeader.countLength * 2 + EncryptionHeader.keyLength, EncryptionHeader.countLength * 2 + EncryptionHeader.keyLength + EncryptedData.nonceLength));
+            count: bytesToNumber(data.subarray(offset, offset += EncryptionHeader.countLength)),
+            previous: bytesToNumber(data.subarray(offset, offset += EncryptionHeader.countLength)),
+            publicKey: data.subarray(offset, offset += EncryptionHeader.keyLength)
+        }, data.subarray(offset, offset += EncryptedData.nonceLength));
     }
 
 }
@@ -516,8 +484,19 @@ export class EncryptedData implements Encodable {
     public static readonly nonceLength = crypto.box.nonceLength;
 
     private _version: number = EncryptedData.version;
+    public readonly header: Uint8Array;
+    public readonly hashkey?: Uint8Array;
+    public readonly nonce?: Uint8Array;
+    public readonly payload: Uint8Array;
 
-    public constructor(public readonly header: Uint8Array, public readonly nonce: Uint8Array, public readonly payload: Uint8Array) { }
+    public constructor(opts: { header: Uint8Array, payload: Uint8Array })
+    public constructor(opts: { header: Uint8Array, hashkey: Uint8Array, nonce: Uint8Array, payload: Uint8Array })
+    public constructor({ hashkey, header, nonce, payload }: { header: Uint8Array, hashkey?: Uint8Array, nonce?: Uint8Array, payload: Uint8Array }) {
+        this.header = header;
+        this.hashkey = hashkey;
+        this.nonce = nonce;
+        this.payload = payload;
+    }
 
     public get version(): number {
         return this._version;
@@ -528,19 +507,21 @@ export class EncryptedData implements Encodable {
     }
 
     public toBytes(): Uint8Array {
-        return concatBytes(numberToBytes(this._version, 1), numberToBytes(this.header.length, 3), this.header, this.nonce, this.payload);
+        return concatBytes(numberToBytes(this._version | (this.hashkey && this.nonce ? 128 : 0), 1), numberToBytes(this.header.length, 3), this.header, this.hashkey ?? new Uint8Array(), this.nonce ?? new Uint8Array, this.payload);
     }
 
     public toJSON(): {
         version: number;
         header: string;
-        nonce: string;
+        hashkey?: string;
+        nonce?: string;
         payload: string;
     } {
         return {
             version: this._version,
             header: decodeBase64(this.header),
-            nonce: decodeBase64(this.nonce),
+            hashkey: this.hashkey ? decodeBase64(this.hashkey) : undefined,
+            nonce: this.nonce ? decodeBase64(this.nonce) : undefined,
             payload: decodeBase64(this.payload)
         }
     }
@@ -548,9 +529,21 @@ export class EncryptedData implements Encodable {
     public static from(data: Uint8Array | EncryptedData): EncryptedData {
         if (data instanceof EncryptedData)
             data = data.toBytes();
+        const versionByte = bytesToNumber(data.subarray(0, 1));
         const headerLength = bytesToNumber(data.subarray(1, 4));
-        const obj = new EncryptedData(data.subarray(4, 4 + headerLength), data.subarray(4 + headerLength, 4 + headerLength + this.nonceLength), data.subarray(4 + headerLength + this.nonceLength));
-        obj._version = bytesToNumber(data.subarray(0, 1));
+        let offset = 4;
+        const header = data.subarray(offset, offset += headerLength);
+        let hashkey: Uint8Array | undefined, nonce: Uint8Array | undefined;
+        if ((versionByte & 128) > 0) {
+            hashkey = data.subarray(offset, offset += 32);
+            nonce = data.subarray(offset, offset += this.nonceLength);
+        }
+        const payload = data.subarray(offset);
+        if (!hashkey || !nonce)
+            var obj = new EncryptedData({ header, payload });
+        else
+            var obj = new EncryptedData({ header, hashkey, nonce, payload });
+        obj._version = versionByte & 127;
         return obj;
     }
 }

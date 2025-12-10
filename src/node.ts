@@ -78,7 +78,7 @@ export class FreeSignalNode {
     }
 
     public get userId(): UserId {
-        return UserId.fromKey(this.identityKey);
+        return this.identityKey.userId;
     }
 
     public onRequest: (request: BootstrapRequest) => void = () => { };
@@ -123,7 +123,7 @@ export class FreeSignalNode {
 
     public packRelay(receiverId: string | UserId, data: Datagram): Promise<Datagram> {
         //console.debug("Packing Relay");
-        return this.encrypt(receiverId, Protocols.RELAY, encodeData(data));
+        return this.encrypt(receiverId, Protocols.RELAY, data.toBytes());
     }
 
     public async packDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<Datagram> {

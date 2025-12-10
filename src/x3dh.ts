@@ -100,8 +100,7 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(ephemeralKey.secretKey, signedPreKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(ephemeralKey.secretKey, onetimePreKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 3);
-        //, headerKey: derivedKey.subarray(KeySession.keyLength, KeySession.keyLength * 2), nextHeaderKey: derivedKey.subarray(KeySession.keyLength * 2)
-        const session = new KeySession({ identityKey, remoteKey: identityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
+        const session = new KeySession({ identityKey, remoteKey: identityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength), headerKey: derivedKey.subarray(KeySession.keyLength, KeySession.keyLength * 2), nextHeaderKey: derivedKey.subarray(KeySession.keyLength * 2) });
         const encrypted = encryptData(session, concatBytes(crypto.hash(this.identityKey.toBytes()), crypto.hash(identityKey.toBytes()), associatedData ?? new Uint8Array()));
         if (!encrypted)
             throw new Error("Decryption error");
@@ -136,8 +135,7 @@ export class KeyExchange {
             ...crypto.ECDH.scalarMult(signedPreKey.secretKey, ephemeralKey),
             ...onetimePreKey ? crypto.ECDH.scalarMult(onetimePreKey.secretKey, ephemeralKey) : new Uint8Array()
         ]), new Uint8Array(KeySession.keyLength).fill(0), KeyExchange.hkdfInfo, KeySession.keyLength * 3);
-        //nextHeaderKey: derivedKey.subarray(KeySession.keyLength, KeySession.keyLength * 2), headerKey: derivedKey.subarray(KeySession.keyLength * 2)
-        const session = new KeySession({ identityKey, secretKey: this.privateIdentityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength) });
+        const session = new KeySession({ identityKey, secretKey: this.privateIdentityKey.exchangeKey, rootKey: derivedKey.subarray(0, KeySession.keyLength), nextHeaderKey: derivedKey.subarray(KeySession.keyLength, KeySession.keyLength * 2), headerKey: derivedKey.subarray(KeySession.keyLength * 2) });
         const data = decryptData(session, encodeBase64(message.associatedData));
         if (!data)
             throw new Error("Error decrypting ACK message");
