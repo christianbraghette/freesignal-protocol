@@ -24,33 +24,50 @@ import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
 import { decodeData, encodeBase64, encodeData, compareBytes } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
+import EventEmitter, { EventCall } from "easyemitter.ts";
 
-export class BootstrapRequest {
+export class BootstrapRequest extends EventEmitter<'change', BootstrapRequest> {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
 
-    public constructor(public readonly senderId: UserId | string, private readonly datagram: Datagram) { }
+    public constructor(public readonly senderId: UserId | string, private readonly keyExchangeData: KeyExchangeData) {
+        super();
+        this.on('change', (data) => this.onChange(data));
+    }
+
+    public onChange: EventCall<'change', BootstrapRequest> = () => { };
 
     public get status() {
         return this.#status;
     }
 
-    public async get(): Promise<Datagram | undefined> {
-        return this.#status === 'accepted' ? this.datagram : undefined;
+    public get data(): KeyExchangeData | undefined {
+        return this.#status === 'accepted' ? this.keyExchangeData : undefined;
     }
 
-    public async accept(): Promise<Datagram | undefined> {
+    public accept(): void {
         if (this.status === 'pending')
             this.#status = 'accepted';
-        return await this.get();
+        this.emit('change', this);
     }
 
-    public deny() {
+    public deny(): void {
         if (this.status === 'pending')
             this.#status = 'denied';
-        return;
+        this.emit('change', this);
     }
 
 }
+
+type NodeEventData = {
+    header: DatagramHeader,
+    payload?: Uint8Array,
+    datagram?: Datagram
+};
+
+type MessageEventData = {
+    header: DatagramHeader,
+    payload: Uint8Array
+};
 
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
@@ -59,6 +76,7 @@ export class FreeSignalNode {
     protected readonly keyExchange: KeyExchange;
     protected readonly discovers: Set<string> = new Set();
     protected readonly bootstraps: LocalStorage<string, BootstrapRequest>;
+    protected readonly emitter = new EventEmitter<'send' | 'handshaked' | 'message' | 'ping', NodeEventData>();
 
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
@@ -71,6 +89,19 @@ export class FreeSignalNode {
         this.keyExchange = new KeyExchange(storage.keyExchange, this.privateIdentityKey);
         this.bundles = storage.bundles;
         this.bootstraps = storage.bootstraps;
+
+        this.emitter.on('send', (data) => this.onSend(data.data!.datagram!.toBytes()));
+        this.emitter.on('handshaked', (data) => this.onHandshaked(UserId.from(data.data!.header.sender)));
+    }
+
+    public onMessage: (data: MessageEventData) => void = () => { };
+    public onSend: (data: Uint8Array) => void = () => { };
+    public onHandshaked: (userId: UserId) => void = () => { };
+
+    public async waitHandshaked(userId: UserId | string, timeout?: number): Promise<void> {
+        if (timeout)
+            setTimeout(() => { throw new Error(); }, timeout);
+        while ((await this.emitter.wait('handshaked', timeout))?.header.sender !== userId.toString());
     }
 
     public get identityKey(): IdentityKey {
@@ -81,11 +112,15 @@ export class FreeSignalNode {
         return this.identityKey.userId;
     }
 
-    public onRequest: (request: BootstrapRequest) => void = () => { };
-
-    public async getRequest(userId: string): Promise<Datagram | undefined> {
-        return (await this.bootstraps.get(userId))?.get();
-    }
+    public readonly requests: {
+        onRequest: (request: BootstrapRequest) => void;
+        getRequest: (userId: string) => Promise<BootstrapRequest | undefined>
+    } = {
+            onRequest: () => { },
+            getRequest: (userId: string): Promise<BootstrapRequest | undefined> => {
+                return this.bootstraps.get(userId);
+            }
+        }
 
     protected async encrypt(receiverId: string | UserId, protocol: Protocols, data: Uint8Array): Promise<Datagram> {
         if (receiverId instanceof UserId)
@@ -98,36 +133,46 @@ export class FreeSignalNode {
         return new Datagram(this.userId.toString(), receiverId, protocol, encrypted).sign(this.privateIdentityKey.signatureKey);
     }
 
-    public async packHandshake(data: KeyExchangeData): Promise<Datagram>
-    public async packHandshake(receiverId: string | UserId): Promise<Datagram>
-    public async packHandshake(data: KeyExchangeData | string | UserId): Promise<Datagram> {
+    public async sendHandshake(data: KeyExchangeData): Promise<void>
+    public async sendHandshake(receiverId: string | UserId): Promise<void>
+    public async sendHandshake(data: KeyExchangeData | string | UserId): Promise<void> {
         if (typeof data === 'string' || data instanceof UserId) {
-            //console.debug("Packing Handshake Ack");
+            //console.debug("Sending Handshake Ack");
             const userId = data.toString();
             const identityKey = (await this.sessions.get(userId))?.identityKey;
             if (!identityKey)
                 throw new Error("Missing user");
-            const res = await this.encrypt(userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey))
-            return res;
+            const datagram = await this.encrypt(userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey));
+            this.emitter.emit('send', { header: datagram.header, datagram });
+            return;
         }
-        //console.debug("Packing Handshake Syn");
+        //console.debug("Sending Handshake Syn");
         const { session, message } = await this.keyExchange.digestData(data, encodeData(await this.keyExchange.generateBundle()));
         await this.sessions.set(session.userId.toString(), session);
-        return new Datagram(this.userId.toString(), UserId.fromKey(data.identityKey).toString(), Protocols.HANDSHAKE, encodeData(message)).sign(this.privateIdentityKey.signatureKey);
+        const datagram = new Datagram(this.userId.toString(), UserId.fromKey(data.identityKey).toString(), Protocols.HANDSHAKE, encodeData(message)).sign(this.privateIdentityKey.signatureKey);
+        this.emitter.emit('send', { header: datagram.header, datagram });
     }
 
-    public packData<T>(receiverId: string | UserId, data: T): Promise<Datagram> {
-        //console.debug("Packing Data");
-        return this.encrypt(receiverId, Protocols.MESSAGE, encodeData(data));
+    public async sendData<T>(receiverId: string | UserId, data: T): Promise<void> {
+        //console.debug("Sending Data");
+        const datagram = await this.encrypt(receiverId, Protocols.MESSAGE, encodeData(data));
+        this.emitter.emit('send', { header: datagram.header, datagram });
     }
 
-    public packRelay(receiverId: string | UserId, data: Datagram): Promise<Datagram> {
-        //console.debug("Packing Relay");
-        return this.encrypt(receiverId, Protocols.RELAY, data.toBytes());
+    public async sendRelay(receiverId: string | UserId, data: Datagram): Promise<void> {
+        //console.debug("Sending Relay");
+        const datagram = await this.encrypt(receiverId, Protocols.RELAY, data.toBytes());
+        this.emitter.emit('send', { header: datagram.header, datagram });
     }
 
-    public async packDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<Datagram> {
-        //console.debug("Packing Discover");
+    public async sendPing(receiverId: string | UserId): Promise<void> {
+        //console.debug("Sending Ping");
+        const datagram = new Datagram(this.userId.toString(), receiverId.toString(), Protocols.PING);
+        this.emitter.emit('send', { header: datagram.header, datagram });
+    }
+
+    public async sendDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<void> {
+        //console.debug("Sending Discover");
         if (receiverId instanceof UserId)
             receiverId = receiverId.toString();
         if (discoverId instanceof UserId)
@@ -137,17 +182,14 @@ export class FreeSignalNode {
             discoverId
         };
         this.discovers.add(receiverId);
-        return this.encrypt(receiverId, Protocols.DISCOVER, encodeData(message));
+        const datagram = await this.encrypt(receiverId, Protocols.DISCOVER, encodeData(message));
+        this.emitter.emit('send', { header: datagram.header, datagram });
     }
 
-    public async packBootstrap(receiverId: string | UserId) {
-        //console.debug("Packing Bootstrap");
-        return new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
-    }
-
-    public async packGetBootstrap(receiverId: string | UserId) {
-        //console.debug("Packing GetBootstrap");
-        return new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP);
+    public async sendBootstrap(receiverId: string | UserId): Promise<void> {
+        //console.debug("Sending Bootstrap");
+        const datagram = new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
+        this.emitter.emit('send', { header: datagram.header, datagram });
     }
 
     protected async decrypt(datagram: Datagram): Promise<Uint8Array> {
@@ -166,26 +208,9 @@ export class FreeSignalNode {
         return decrypted;
     }
 
-    /**
-     * Open the datagram and execute operation of Discover and Handshake.
-     * 
-     * @param datagram 
-     * @returns Header and decrypted payload
-     */
-    public async open(datagram: Datagram | Uint8Array): Promise<{
-        header: DatagramHeader,
-        payload?: Uint8Array,
-        datagram?: Datagram
-    }> {
+    protected async open(datagram: Datagram | Uint8Array): Promise<void> {
         if (datagram instanceof Uint8Array)
             datagram = Datagram.from(datagram);
-        let out: {
-            header: DatagramHeader,
-            payload?: Uint8Array,
-            datagram?: Datagram
-        } = {
-            header: DatagramHeader.from(datagram.header)
-        };
         switch (datagram.protocol) {
             case Protocols.HANDSHAKE:
                 if (!datagram.payload)
@@ -198,7 +223,8 @@ export class FreeSignalNode {
                         throw new Error("Missing user");
                     if (!compareBytes(payload, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey)))
                         throw new Error("Error validating handshake data");
-                    return out;
+                    this.emitter.emit('handshaked', { header: datagram.header });
+                    return;
                 }
                 //console.debug("Opening Handshake Syn");
                 const data = decodeData<KeyExchangeSynMessage>(datagram.payload);
@@ -207,20 +233,19 @@ export class FreeSignalNode {
                 const { session, associatedData } = await this.keyExchange.digestMessage(data);
                 await this.sessions.set(session.userId.toString(), session);
                 await this.bundles.set(session.userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
-                out.datagram = await this.packHandshake(session.userId);
-                if (!out.datagram)
-                    throw new Error("Error during handshake");
-                return out;
+                await this.sendHandshake(session.userId);
+                this.emitter.emit('handshaked', { header: datagram.header });
+                return;
 
             case Protocols.MESSAGE:
                 //console.debug("Opening Message");
-                out.payload = await this.decrypt(datagram);
-                return out;
+                this.emitter.emit('message', { header: datagram.header, payload: await this.decrypt(datagram) });
+                return;
 
             case Protocols.RELAY:
                 //console.debug("Opening Relay");
-                out.payload = await this.decrypt(datagram);
-                return out;
+                this.emitter.emit('send', { header: Datagram.from(await this.decrypt(datagram)) });
+                return;
 
             case Protocols.DISCOVER:
                 //console.debug("Opening Discover");
@@ -232,12 +257,12 @@ export class FreeSignalNode {
                     } else {
                         const bundle = await this.bundles.get(message.discoverId);
                         if (!bundle)
-                            return out;
+                            return;
                         const { version, identityKey, signedPreKey, signature } = bundle;
                         const onetimePreKey = bundle.onetimePreKeys.shift();
                         if (!onetimePreKey) {
                             await this.bundles.delete(message.discoverId);
-                            return out;
+                            return;
                         }
                         data = {
                             version,
@@ -248,31 +273,34 @@ export class FreeSignalNode {
                         };
                     }
                     const response: DiscoverMessage = { type: DiscoverType.RESPONSE, discoverId: message.discoverId, data };
-                    out.datagram = await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response));
+                    this.emitter.emit('send', await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response)));
                 } else if (message.type === DiscoverType.RESPONSE && this.discovers.has(message.discoverId)) {
                     this.discovers.delete(message.discoverId);
                     if (message.data)
-                        out.datagram = await this.packHandshake(message.data);
+                        await this.sendHandshake(message.data);
                 }
-                return out;
+                return;
 
             case Protocols.BOOTSTRAP:
                 //console.debug("Opening Bootstrap");
-                if (datagram.payload) {
-                    const data = decodeData<KeyExchangeData>(datagram.payload);
-                    if (!compareBytes(UserId.fromKey(data.identityKey).toBytes(), encodeBase64(datagram.sender)))
-                        new Error("Malicious bootstrap request");
-                    const request = new BootstrapRequest(datagram.sender, await this.packHandshake(data));
-                    await this.bootstraps.set(datagram.sender, request);
-                    this.onRequest(request);
-                };
-                const handshakeDatagram = await (await this.bootstraps.get(datagram.sender))?.get();
-                if (handshakeDatagram)
-                    out.datagram = handshakeDatagram;
-                return out;
+                if (!datagram.payload)
+                    throw new Error("Invalid Bootstrap");
+                const keyExchangeData = decodeData<KeyExchangeData>(datagram.payload);
+                if (!compareBytes(UserId.fromKey(keyExchangeData.identityKey).toBytes(), encodeBase64(datagram.sender)))
+                    new Error("Malicious bootstrap request");
+                const request = new BootstrapRequest(datagram.sender, keyExchangeData);
+                request.onChange = () => {
+                    if (!request.data)
+                        throw new Error("Error sending handshake");
+                    this.sendHandshake(request.data);
+                }
+                await this.bootstraps.set(datagram.sender, request);
+                this.requests.onRequest(request);
+                return;
 
             case Protocols.PING:
-                return out;
+                this.emitter.emit('ping', { header: datagram.header });
+                return;
 
             default:
                 throw new Error("Invalid protocol");

@@ -19,33 +19,9 @@
 
 import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto, Database, KeyExchangeDataBundle } from "@freesignal/interfaces";
-import { ExportedKeySession, KeySession } from "./double-ratchet";
-import { KeyExchange } from "./x3dh";
+import { ExportedKeySession } from "./double-ratchet";
 import { IdentityKey, PrivateIdentityKey } from "./types";
 import { BootstrapRequest, FreeSignalNode } from "./node";
-
-/**
- * Creates a new Double Ratchet session for secure message exchange.
- *
- * @param opts - Optional parameters for session initialization.
- * @param opts.secretKey - The local party's secret key as a Uint8Array.
- * @param opts.remoteKey - The remote party's public key as a Uint8Array.
- * @param opts.rootKey - An optional root key to initialize the session.
- * @returns A new instance of {@link KeySession}.
- */
-/*export function createKeySession(storage: LocalStorage<string, ExportedKeySession>, opts?: { secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey?: Uint8Array }): KeySession {
-    return new KeySession(storage, opts);
-}*/
-
-/**
- * Creates a new X3DH (Extended Triple Diffie-Hellman) key exchange session.
- *
- * @param storage - Local storage for keys.
- * @returns A new instance of {@link KeyExchange}.
- */
-/*export function createKeyExchange(storage: { keys: LocalStorage<string, Crypto.KeyPair>, sessions: LocalStorage<string, ExportedKeySession> }, privateIdentityKey?: PrivateIdentityKey): KeyExchange {
-    return new KeyExchange(storage, privateIdentityKey);
-}*/
 
 /**
  * Generates identity key
@@ -66,7 +42,6 @@ export function createIdentity(seed?: Uint8Array): PrivateIdentityKey {
 export function createNode(storage: Database<{
     sessions: LocalStorage<string, ExportedKeySession>;
     keyExchange: LocalStorage<string, Crypto.KeyPair>;
-    users: LocalStorage<string, IdentityKey>;
     bundles: LocalStorage<string, KeyExchangeDataBundle>;
     bootstraps: LocalStorage<string, BootstrapRequest>;
 }>, privateIdentityKey?: PrivateIdentityKey): FreeSignalNode {

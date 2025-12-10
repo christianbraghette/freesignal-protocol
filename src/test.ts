@@ -1,50 +1,41 @@
 import { compareBytes, decodeBase64, decodeData, encodeData, encodeUTF8 } from "@freesignal/utils";
 import { AsyncMap, createNode, Datagram } from ".";
+import { FreeSignalNode } from "./node";
 
 console.log("FreeSignal protocol test");
 
-const bob = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
-const alice = createNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
+class TestNode extends FreeSignalNode {
+
+    public open(datagram: Datagram | Uint8Array) {
+        return super.open(datagram);
+    }
+}
+
+const bob = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
+const alice = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
+
+//bob.onHandshaked = (userId) => console.log(userId.toString());
+bob.onSend = (data) => alice.open(data);
+bob.onMessage = (data) => console.log("Alice: ", decodeData<string>(data.payload));
+//alice.onHandshaked = (userId) => console.log(userId.toString());
+alice.onSend = (data) => bob.open(data);
+alice.onMessage = (data) => console.log("Bob: ", decodeData<string>(data.payload));
+
+alice.requests.onRequest = (request) => request.accept();
 
 setImmediate(async () => {
-    const bobBootstrap = await bob.packBootstrap(alice.userId);
+    await bob.sendBootstrap(alice.userId);
+    await bob.waitHandshaked(alice.userId);
+    await bob.sendData(alice.userId, "Hi Alice!");
+    await alice.sendData(bob.userId, "Hi Bob!");
+    await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bob.sendData(alice.userId, msg)));
+    await alice.sendData(bob.userId, "Not so bad my man");
+    await Promise.all(["I'm thinking...", "His this secure?"].map(msg => bob.sendData(alice.userId, msg)));
+})
 
-    alice.onRequest = (request) => { request.accept(); };
+/*process.stdin.resume();
 
-    const test = (await alice.open(bobBootstrap)).datagram;
-    const aliceHandshake = await alice.getRequest(bob.userId.toString());
-    if (!aliceHandshake)
-        throw new Error("Bootstrap Failed");
-
-    const bobHandshake = (await bob.open(aliceHandshake)).datagram;
-    if (!bobHandshake)
-        throw new Error("Handshake Failed");
-    
-    console.log(!!(await alice.open(bobHandshake)).header);
-
-    const first = (await bob.packData(alice.userId, "Hi Alice!")).toBytes();
-
-    console.log("Bob: ", decodeData<string>((await alice.open(first)).payload!));
-    const second = await alice.packData(bob.userId, "Hi Bob!");
-
-    console.log("Test");
-
-    console.log("Alice: ", decodeData<string>((await bob.open(second)).payload!));
-    const third = await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bob.packData(alice.userId, msg)));
-
-    third.forEach(async data => {
-        console.log("Bob: ", decodeData<string>((await alice.open(data)).payload!));
-    });
-    const fourth = await alice.packData(bob.userId, "Not so bad my man");
-
-    console.log("Alice: ", decodeData<string>((await bob.open(fourth)).payload!));
-
-    const fifth = await Promise.all(["I'm thinking...", "His this secure?"].map(msg => bob.packData(alice.userId, msg)));
-    fifth.forEach(async data => {
-        console.log("Bob: ", decodeData<string>((await alice.open(data)).payload!));
-    });
-
-    const msg = await alice.packData(bob.userId, encodeData("test"));
-    const relay = await alice.packRelay(bob.userId, msg);
-    console.log(compareBytes(msg.toBytes(), (await bob.open(relay)).payload!))
-});
+process.on('SIGINT', () => {
+    console.log("Exiting...");
+    process.exit(0);
+});*/

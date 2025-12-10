@@ -357,8 +357,8 @@ export class Datagram implements Encodable, DatagramHeader {
         return data.subarray(0, data.length - (this._signature ? crypto.EdDSA.signatureLength : 0));
     }
 
-    get header(): Uint8Array {
-        return this.toBytes().slice(0, DatagramHeader.headerLength);
+    get header(): DatagramHeader {
+        return DatagramHeader.from(this.toBytes().slice(0, DatagramHeader.headerLength));
     }
 
     public toBytes(): Uint8Array {
