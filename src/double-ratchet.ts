@@ -55,6 +55,7 @@ export class KeySession {
     public static readonly maxCount = 65536;
 
     public readonly identityKey: IdentityKey;
+    public readonly sessionTag: string;
 
     private keyPair: Crypto.KeyPair;
     private rootKey: Uint8Array;
@@ -67,8 +68,10 @@ export class KeySession {
 
     public constructor({ identityKey, secretKey, remoteKey, rootKey, headerKey, nextHeaderKey }: { identityKey: IdentityKey, secretKey?: Uint8Array, remoteKey?: Uint8Array, rootKey: Uint8Array, headerKey?: Uint8Array, nextHeaderKey?: Uint8Array }) {
         this.identityKey = identityKey;
-        this.keyPair = crypto.ECDH.keyPair(secretKey);
         this.rootKey = rootKey;
+        this.sessionTag = decodeBase64(crypto.hkdf(rootKey, new Uint8Array(32).fill(0), "/freesignal/session-authtag", 32));
+        this.keyPair = crypto.ECDH.keyPair(secretKey);
+        
 
         if (headerKey)
             this.headerKey = headerKey;

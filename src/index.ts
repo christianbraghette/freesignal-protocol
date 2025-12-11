@@ -41,6 +41,7 @@ export function createIdentity(seed?: Uint8Array): PrivateIdentityKey {
 /** */
 export function createNode(storage: Database<{
     sessions: LocalStorage<string, ExportedKeySession>;
+    users: LocalStorage<string, string>;
     keyExchange: LocalStorage<string, Crypto.KeyPair>;
     bundles: LocalStorage<string, KeyExchangeDataBundle>;
     bootstraps: LocalStorage<string, BootstrapRequest>;

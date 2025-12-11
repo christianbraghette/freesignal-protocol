@@ -11,8 +11,8 @@ class TestNode extends FreeSignalNode {
     }
 }
 
-const bob = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
-const alice = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
+const bob = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
+const alice = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
 
 //bob.onHandshaked = (userId) => console.log(userId.toString());
 bob.onSend = (data) => alice.open(data);

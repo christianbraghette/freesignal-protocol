@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes } from "@freesignal/utils";
+import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes, compareBytes } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import type { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptionKeys, KeySession } from "./double-ratchet";
@@ -253,12 +253,9 @@ export namespace Protocols {
 }
 
 interface DatagramJSON {
-    id: string;
     version: number;
-    sender: string;
-    receiver: string;
+    sessionTag: string | undefined;
     protocol: Protocols;
-    createdAt: number;
     payload: string | undefined;
     signature: string | undefined;
 };
@@ -267,84 +264,25 @@ export interface SignedDatagram extends Datagram {
     signature: string;
 }
 
-export class DatagramHeader implements Encodable {
-    public static readonly headerLength = 26 + crypto.EdDSA.publicKeyLength * 2;
-
-    readonly id: string;
-    readonly version: number;
-    readonly sender: string;
-    readonly receiver: string;
-    readonly protocol: Protocols;
-    readonly createdAt: number;
-
-    private constructor(data: Uint8Array) {
-        this.version = data[0] & 127;
-        this.protocol = Protocols.decode(data.subarray(1, 2));
-        this.id = crypto.UUID.stringify(data.subarray(2, 18));
-        this.createdAt = bytesToNumber(data.subarray(18, 26));
-        this.sender = decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength));
-        this.receiver = decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramHeader.headerLength));
-    }
-
-    public toBytes(): Uint8Array {
-        return concatBytes(
-            numberToBytes(this.version, 1),
-            Protocols.encode(this.protocol, 1),
-            crypto.UUID.parse(this.id),
-            numberToBytes(this.createdAt, 8),
-            encodeBase64(this.sender),
-            encodeBase64(this.receiver)
-        );
-    }
-
-    public static from(data: Uint8Array | string) {
-        if (typeof data === 'string')
-            data = encodeBase64(data);
-        return new DatagramHeader(data);
-    }
-}
-
-export class Datagram implements Encodable, DatagramHeader {
+export class Datagram implements Encodable {
     public static version = 1;
+    public static readonly headerLength = 34;
 
-    private _id: string;
     private _version: number;
-    public readonly sender: string;
-    public readonly receiver: string;
+    public readonly sessionTag?: string;
     public readonly protocol: Protocols;
-    private _createdAt: number;
-    private _payload?: Uint8Array;
+    public readonly payload?: Uint8Array;
     private _signature?: Uint8Array;
 
-    public constructor(sender: Uint8Array | string, receiver: Uint8Array | string, protocol: Protocols, payload?: Uint8Array | Encodable) {
-        this._id = crypto.UUID.generate().toString();
+    public constructor(protocol: Protocols, payload?: Uint8Array | Encodable, sessionTag?: Uint8Array | string) {
         this._version = Datagram.version;
-        this.sender = typeof sender === 'string' ? sender : decodeBase64(sender);
-        this.receiver = typeof receiver === 'string' ? receiver : decodeBase64(receiver!);
-        this.protocol = protocol!;
-        this._createdAt = Date.now();
-        this._payload = payload instanceof Uint8Array ? payload : payload?.toBytes();
-    }
-
-    public get id() {
-        return this._id;
+        this.sessionTag = sessionTag instanceof Uint8Array ? decodeBase64(sessionTag) : sessionTag;
+        this.protocol = protocol;
+        this.payload = payload instanceof Uint8Array ? payload : payload?.toBytes();
     }
 
     public get version() {
         return this._version;
-    }
-
-    public get createdAt() {
-        return this._createdAt;
-    }
-
-    public set payload(data: Uint8Array) {
-        this._signature = undefined;
-        this._payload = data;
-    }
-
-    public get payload(): Uint8Array | undefined {
-        return this._payload;
     }
 
     public get signature(): string | undefined {
@@ -357,19 +295,12 @@ export class Datagram implements Encodable, DatagramHeader {
         return data.subarray(0, data.length - (this._signature ? crypto.EdDSA.signatureLength : 0));
     }
 
-    get header(): DatagramHeader {
-        return DatagramHeader.from(this.toBytes().slice(0, DatagramHeader.headerLength));
-    }
-
     public toBytes(): Uint8Array {
         return concatBytes(
             new Uint8Array(1).fill(this.version | (this.signature ? 128 : 0)), //1
             Protocols.encode(this.protocol), //1
-            crypto.UUID.parse(this.id) ?? [], //16
-            new Uint8Array(numberToBytes(this._createdAt, 8)), //8
-            encodeBase64(this.sender), //32
-            encodeBase64(this.receiver), //32
-            this._payload ?? new Uint8Array(),
+            this.sessionTag ? encodeBase64(this.sessionTag) : new Uint8Array(32).fill(0), //32
+            this.payload ?? new Uint8Array(),
             this._signature ?? new Uint8Array()
         );
     }
@@ -379,58 +310,66 @@ export class Datagram implements Encodable, DatagramHeader {
         return this as SignedDatagram;
     }
 
+    public verify(publicKey: Uint8Array) {
+        if (!this._signature)
+            throw new Error("Datagram not signed");
+        return crypto.EdDSA.verify(
+            this.unsigned,
+            this._signature,
+            publicKey
+        );
+    }
+
     public toString(): string {
         return decodeBase64(this.toBytes());
     }
 
     public toJSON(): DatagramJSON {
         return {
-            id: this.id,
             version: this.version,
-            sender: this.sender,
-            receiver: this.receiver,
+            sessionTag: this.sessionTag,
             protocol: this.protocol,
-            createdAt: this.createdAt,
             payload: this.payload ? decodeBase64(this.payload) : undefined,
             signature: this._signature ? decodeBase64(this._signature) : undefined
         };
-    }
-
-    public static verify(datagram: Datagram, publicKey: Uint8Array) {
-        if (!datagram._signature)
-            throw new Error("Datagram not signed");
-        return crypto.EdDSA.verify(
-            datagram.unsigned,
-            datagram._signature,
-            publicKey
-        );
     }
 
     public static from(data: Uint8Array | Datagram | string): Datagram {
         if (typeof data === 'string')
             data = encodeBase64(data);
         if (data instanceof Uint8Array) {
+            const authTag = data.subarray(2, Datagram.headerLength);
             const datagram = new Datagram(
-                decodeBase64(data.subarray(26, 26 + crypto.EdDSA.publicKeyLength)),
-                decodeBase64(data.subarray(26 + crypto.EdDSA.publicKeyLength, DatagramHeader.headerLength)),
                 Protocols.decode(data.subarray(1, 2)),
-                data.subarray(DatagramHeader.headerLength, data.length - (data[0] & 128 ? crypto.EdDSA.signatureLength : 0))
+                data.subarray(Datagram.headerLength, data.length - (data[0] & 128 ? crypto.EdDSA.signatureLength : 0)),
+                compareBytes(authTag, new Uint8Array(32).fill(0)) ? undefined : decodeBase64(authTag)
             );
             datagram._version = data[0] & 127;
-            datagram._id = crypto.UUID.stringify(data.subarray(2, 18));
-            datagram._createdAt = bytesToNumber(data.subarray(18, 26));
             if (data[0] & 128)
                 datagram._signature = data.subarray(data.length - crypto.EdDSA.signatureLength);
             return datagram;
         } else if (data instanceof Datagram) {
-            const datagram = new Datagram(data.sender, data.receiver, data.protocol, data.payload);
-            datagram._id = data.id;
+            const datagram = new Datagram(data.protocol, data.payload, data.sessionTag);
             datagram._version = data.version;
-            datagram._createdAt = data._createdAt;
             datagram._signature = data._signature;
             return datagram;
         } else
             throw new Error('Invalid constructor arguments for Datagram');
+    }
+}
+
+export class EncryptedDatagram extends Datagram {
+    declare public readonly sessionTag: string;
+
+    public constructor(protocol: Protocols, sessionTag: Uint8Array | string, payload?: Uint8Array | Encodable,) {
+        super(protocol, payload, sessionTag);
+    }
+
+    public static from(data: Uint8Array | Datagram | string): EncryptedDatagram {
+        const datagram = Datagram.from(data);
+        if (!datagram.sessionTag)
+            throw new Error("Datagram not encrypted");
+        return datagram as EncryptedDatagram;
     }
 }
 

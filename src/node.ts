@@ -18,7 +18,7 @@
  */
 
 import { Database, LocalStorage, Crypto, KeyExchangeDataBundle, KeyExchangeData, KeyExchangeSynMessage } from "@freesignal/interfaces";
-import { Datagram, DatagramHeader, decryptData, DiscoverMessage, DiscoverType, encryptData, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types";
+import { Datagram, decryptData, DiscoverMessage, DiscoverType, encryptData, EncryptedDatagram, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types";
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
@@ -59,20 +59,30 @@ export class BootstrapRequest extends EventEmitter<'change', BootstrapRequest> {
 }
 
 type NodeEventData = {
-    header: DatagramHeader,
+    session?: KeySession,
     payload?: Uint8Array,
     datagram?: Datagram,
     request?: BootstrapRequest
 };
 
+type HandshakeEventData = {
+    session: KeySession
+};
+
+type SendEventData = {
+    session?: KeySession,
+    datagram: Datagram
+};
+
 type MessageEventData = {
-    header: DatagramHeader,
+    session: KeySession,
     payload: Uint8Array
 };
 
 export class FreeSignalNode {
     protected readonly privateIdentityKey: PrivateIdentityKey
     protected readonly sessions: SessionMap;
+    protected readonly users: LocalStorage<string, string>;
     protected readonly bundles: LocalStorage<string, KeyExchangeDataBundle>;
     protected readonly keyExchange: KeyExchange;
     protected readonly discovers: Set<string> = new Set();
@@ -81,12 +91,14 @@ export class FreeSignalNode {
 
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
+        users: LocalStorage<string, string>,
         keyExchange: LocalStorage<string, Crypto.KeyPair>,
         bundles: LocalStorage<string, KeyExchangeDataBundle>,
         bootstraps: LocalStorage<string, BootstrapRequest>
     }>, privateIdentityKey?: PrivateIdentityKey) {
         this.privateIdentityKey = privateIdentityKey ?? createIdentity();
         this.sessions = new SessionMap(storage.sessions);
+        this.users = storage.users;
         this.keyExchange = new KeyExchange(storage.keyExchange, this.privateIdentityKey);
         this.bundles = storage.bundles;
         this.bootstraps = storage.bootstraps;
@@ -97,9 +109,9 @@ export class FreeSignalNode {
         this.emitter.on('bootstrap', this.bootstrapHandler);
     }
 
-    protected messageHandler: EventCall<"message", NodeEventData> = (data) => this.onMessage({ header: data.data?.header!, payload: data.data?.payload! })
+    protected messageHandler: EventCall<"message", NodeEventData> = (data) => this.onMessage({ session: data.data?.session!, payload: data.data?.payload! })
     protected sendHandler: EventCall<"send", NodeEventData> = (data) => this.onSend(data.data!.datagram!.toBytes());
-    protected handshakeHandler: EventCall<"handshake", NodeEventData> = (data) => this.onHandshake(UserId.from(data.data!.header.sender));
+    protected handshakeHandler: EventCall<"handshake", NodeEventData> = (data) => this.onHandshake(UserId.from(data.data?.session?.userId!));
     protected bootstrapHandler: EventCall<"bootstrap", NodeEventData> = (data) => this.onRequest(data.data?.request!);
 
     public onMessage: (data: MessageEventData) => void = () => { };
@@ -114,7 +126,7 @@ export class FreeSignalNode {
     public async waitHandshaked(userId: UserId | string, timeout?: number): Promise<void> {
         if (timeout)
             setTimeout(() => { throw new Error(); }, timeout);
-        while ((await this.emitter.wait('handshake', timeout))?.header.sender !== userId.toString());
+        while ((await this.emitter.wait('handshake', timeout))?.session?.userId.toString() !== userId.toString());
     }
 
     public get identityKey(): IdentityKey {
@@ -124,53 +136,57 @@ export class FreeSignalNode {
     public get userId(): UserId {
         return this.identityKey.userId;
     }
-    protected async encrypt(receiverId: string | UserId, protocol: Protocols, data: Uint8Array): Promise<Datagram> {
-        if (receiverId instanceof UserId)
-            receiverId = receiverId.toString();
-        const session = await this.sessions.get(receiverId);
+    protected async encrypt(receiverId: string | UserId, protocol: Protocols, data: Uint8Array): Promise<SendEventData> {
+        const sessionTag = await this.users.get(receiverId.toString());
+        if (!sessionTag)
+            throw new Error("User not found: " + receiverId);
+        const session = await this.sessions.get(sessionTag);
         if (!session)
-            throw new Error("Session not found for user: " + receiverId);
+            throw new Error("Session not found for sessionTag: " + sessionTag);
         const encrypted = encryptData(session, data);
-        this.sessions.set(receiverId, session);
-        return new Datagram(this.userId.toString(), receiverId, protocol, encrypted).sign(this.privateIdentityKey.signatureKey);
+        this.sessions.set(receiverId.toString(), session);
+        return { session, datagram: new EncryptedDatagram(protocol, session.sessionTag, encrypted).sign(this.privateIdentityKey.signatureKey) };
     }
 
     public async sendHandshake(data: KeyExchangeData): Promise<void>
-    public async sendHandshake(receiverId: string | UserId): Promise<void>
-    public async sendHandshake(data: KeyExchangeData | string | UserId): Promise<void> {
-        if (typeof data === 'string' || data instanceof UserId) {
+    public async sendHandshake(session: KeySession): Promise<void>
+    public async sendHandshake(data: KeyExchangeData | KeySession): Promise<void> {
+        if (data instanceof KeySession) {
             //console.debug("Sending Handshake Ack");
-            const userId = data.toString();
-            const identityKey = (await this.sessions.get(userId))?.identityKey;
-            if (!identityKey)
-                throw new Error("Missing user");
-            const datagram = await this.encrypt(userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey));
-            this.emitter.emit('send', { header: datagram.header, datagram });
+            const session = await this.sessions.get(data.sessionTag);
+            if (!session)
+                throw new Error("Session not found for user: " + data);
+            this.emitter.emit('send', await this.encrypt(session.userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, session.identityKey.exchangeKey)));
             return;
         }
         //console.debug("Sending Handshake Syn");
         const { session, message } = await this.keyExchange.digestData(data, encodeData(await this.keyExchange.generateBundle()));
-        await this.sessions.set(session.userId.toString(), session);
-        const datagram = new Datagram(this.userId.toString(), UserId.fromKey(data.identityKey).toString(), Protocols.HANDSHAKE, encodeData(message)).sign(this.privateIdentityKey.signatureKey);
-        this.emitter.emit('send', { header: datagram.header, datagram });
+        await this.sessions.set(session.sessionTag, session);
+        await this.users.set(session.userId.toString(), session.sessionTag);
+        const datagram = new Datagram(Protocols.HANDSHAKE, encodeData(message), session.sessionTag).sign(this.privateIdentityKey.signatureKey);
+        this.emitter.emit('send', { session, datagram });
     }
 
     public async sendData<T>(receiverId: string | UserId, data: T): Promise<void> {
         //console.debug("Sending Data");
-        const datagram = await this.encrypt(receiverId, Protocols.MESSAGE, encodeData(data));
-        this.emitter.emit('send', { header: datagram.header, datagram });
+        this.emitter.emit('send', await this.encrypt(receiverId, Protocols.MESSAGE, encodeData(data)));
     }
 
     public async sendRelay(receiverId: string | UserId, data: Datagram): Promise<void> {
         //console.debug("Sending Relay");
-        const datagram = await this.encrypt(receiverId, Protocols.RELAY, data.toBytes());
-        this.emitter.emit('send', { header: datagram.header, datagram });
+        this.emitter.emit('send', await this.encrypt(receiverId, Protocols.RELAY, data.toBytes()));
     }
 
     public async sendPing(receiverId: string | UserId): Promise<void> {
         //console.debug("Sending Ping");
-        const datagram = new Datagram(this.userId.toString(), receiverId.toString(), Protocols.PING);
-        this.emitter.emit('send', { header: datagram.header, datagram });
+        const sessionTag = await this.users.get(receiverId.toString());
+        if (!sessionTag)
+            throw new Error("Session not found for user: " + receiverId);
+        const session = await this.sessions.get(sessionTag);
+        if (!session)
+            throw new Error("Session not found for sessionTag: " + sessionTag);
+        const datagram = new Datagram(Protocols.PING, undefined, session.sessionTag);
+        this.emitter.emit('send', { session, datagram });
     }
 
     public async sendDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<void> {
@@ -184,76 +200,79 @@ export class FreeSignalNode {
             discoverId
         };
         this.discovers.add(receiverId);
-        const datagram = await this.encrypt(receiverId, Protocols.DISCOVER, encodeData(message));
-        this.emitter.emit('send', { header: datagram.header, datagram });
+        this.emitter.emit('send', await this.encrypt(receiverId, Protocols.DISCOVER, encodeData(message)));
     }
 
     public async sendBootstrap(receiverId: string | UserId): Promise<void> {
         //console.debug("Sending Bootstrap");
         if (await this.sessions.has(receiverId.toString()))
             throw new Error("Session exists");
-        const datagram = new Datagram(this.userId.toString(), receiverId.toString(), Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
-        this.emitter.emit('send', { header: datagram.header, datagram });
+        const datagram = new Datagram(Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
+        this.emitter.emit('send', { datagram });
     }
 
-    protected async decrypt(datagram: Datagram): Promise<Uint8Array> {
-        const identityKey = (await this.sessions.get(datagram.sender))?.identityKey;
-        if (!identityKey)
-            throw new Error("User IdentityKey not found");
-        if (!Datagram.verify(datagram, identityKey.signatureKey))
-            throw new Error("Signature not verified");
-        const session = await this.sessions.get(datagram.sender);
+    protected async decrypt(datagram: EncryptedDatagram | Datagram | Uint8Array): Promise<MessageEventData> {
+        datagram = EncryptedDatagram.from(datagram);
+        if (!datagram.sessionTag)
+            throw new Error("Datagram not encrypted");
+        const session = await this.sessions.get(datagram.sessionTag);
         if (!session)
-            throw new Error("Session not found for user: " + datagram.sender);
+            throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
+        if (!datagram.verify(session.identityKey.signatureKey))
+            throw new Error("Signature not verified");
         if (!datagram.payload)
             throw new Error("Missing payload");
         const decrypted = decryptData(session, datagram.payload);
-        this.sessions.set(datagram.sender, session);
-        return decrypted;
+        this.sessions.set(datagram.sessionTag, session);
+        return { session, payload: decrypted };
     }
 
-    protected async open(datagram: Datagram | Uint8Array): Promise<void> {
+    protected async open(datagram: Datagram | EncryptedDatagram | Uint8Array): Promise<void> {
         if (datagram instanceof Uint8Array)
             datagram = Datagram.from(datagram);
         switch (datagram.protocol) {
-            case Protocols.HANDSHAKE:
-                if (!datagram.payload)
+            case Protocols.HANDSHAKE: {
+                const encrypted = EncryptedDatagram.from(datagram);
+                if (!encrypted.payload)
                     throw new Error("Missing payload");
-                if (await this.sessions.has(datagram.sender)) {
+                if (await this.sessions.has(encrypted.sessionTag)) {
                     //console.debug("Opening Handshake Ack");
-                    const payload = await this.decrypt(datagram);
-                    const identityKey = (await this.sessions.get(datagram.sender))?.identityKey;
-                    if (!identityKey)
-                        throw new Error("Missing user");
-                    if (!compareBytes(payload, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, identityKey.exchangeKey)))
+                    const session = await this.sessions.get(encrypted.sessionTag);
+                    const { payload } = await this.decrypt(encrypted);
+                    if (!session)
+                        throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
+                    if (!compareBytes(payload, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, session.identityKey.exchangeKey)))
                         throw new Error("Error validating handshake data");
-                    this.emitter.emit('handshake', { header: datagram.header });
+                    this.emitter.emit('handshake', { session });
                     return;
                 }
                 //console.debug("Opening Handshake Syn");
-                const data = decodeData<KeyExchangeSynMessage>(datagram.payload);
-                if (!Datagram.verify(datagram, IdentityKey.from(data.identityKey).signatureKey))
+                const data = decodeData<KeyExchangeSynMessage>(encrypted.payload);
+                if (!datagram.verify(IdentityKey.from(data.identityKey).signatureKey))
                     throw new Error("Signature not verified");
                 const { session, associatedData } = await this.keyExchange.digestMessage(data);
-                await this.sessions.set(session.userId.toString(), session);
+                await this.sessions.set(session.sessionTag, session);
+                await this.users.set(session.userId.toString(), session.sessionTag);
                 await this.bundles.set(session.userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
-                await this.sendHandshake(session.userId);
-                this.emitter.emit('handshake', { header: datagram.header });
+                await this.sendHandshake(session);
+                this.emitter.emit('handshake', { session });
                 return;
+            }
 
             case Protocols.MESSAGE:
                 //console.debug("Opening Message");
-                this.emitter.emit('message', { header: datagram.header, payload: await this.decrypt(datagram) });
+                this.emitter.emit('message', await this.decrypt(datagram));
                 return;
 
             case Protocols.RELAY:
                 //console.debug("Opening Relay");
-                this.emitter.emit('send', { header: Datagram.from(await this.decrypt(datagram)) });
+                this.emitter.emit('send', await this.decrypt(datagram));
                 return;
 
-            case Protocols.DISCOVER:
+            case Protocols.DISCOVER: {
                 //console.debug("Opening Discover");
-                const message = decodeData<DiscoverMessage>(await this.decrypt(datagram));
+                const { session, payload } = await this.decrypt(datagram);
+                const message = decodeData<DiscoverMessage>(payload);
                 if (message.type === DiscoverType.REQUEST && message.discoverId && !(await this.sessions.has(message.discoverId))) {
                     let data: KeyExchangeData;
                     if (message.discoverId === this.userId.toString()) {
@@ -277,33 +296,38 @@ export class FreeSignalNode {
                         };
                     }
                     const response: DiscoverMessage = { type: DiscoverType.RESPONSE, discoverId: message.discoverId, data };
-                    this.emitter.emit('send', await this.encrypt(datagram.sender, Protocols.DISCOVER, encodeData(response)));
+                    this.emitter.emit('send', await this.encrypt(session.userId, Protocols.DISCOVER, encodeData(response)));
                 } else if (message.type === DiscoverType.RESPONSE && this.discovers.has(message.discoverId)) {
                     this.discovers.delete(message.discoverId);
                     if (message.data)
                         await this.sendHandshake(message.data);
                 }
                 return;
+            }
 
-            case Protocols.BOOTSTRAP:
+            case Protocols.BOOTSTRAP: {
                 //console.debug("Opening Bootstrap");
                 if (!datagram.payload)
                     throw new Error("Invalid Bootstrap");
                 const keyExchangeData = decodeData<KeyExchangeData>(datagram.payload);
-                if (!compareBytes(UserId.fromKey(keyExchangeData.identityKey).toBytes(), encodeBase64(datagram.sender)))
-                    new Error("Malicious bootstrap request");
-                const request = new BootstrapRequest(datagram.sender, keyExchangeData);
-                request.onChange = () => {
+                const userId = UserId.fromKey(keyExchangeData.identityKey);
+                const request = new BootstrapRequest(userId, keyExchangeData);
+                request.onChange = (event) => {
                     if (!request.data)
                         throw new Error("Error sending handshake");
-                    this.sendHandshake(request.data);
+                    this.sendHandshake(event.data?.data!);
                 }
-                await this.bootstraps.set(datagram.sender, request);
-                this.emitter.emit('bootstrap', { header: datagram.header, request });
+                await this.bootstraps.set(userId.toString(), request);
+                this.emitter.emit('bootstrap', { request });
                 return;
+            }
 
             case Protocols.PING:
-                this.emitter.emit('ping', { header: datagram.header });
+                datagram = EncryptedDatagram.from(datagram);
+                const session = await this.sessions.get(datagram.sessionTag!);
+                if (!session)
+                    throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
+                this.emitter.emit('ping', { session });
                 return;
 
             default:
