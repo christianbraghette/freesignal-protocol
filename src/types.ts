@@ -61,6 +61,8 @@ export function decryptData(session: KeySession, encryptedData: Uint8Array): Uin
 }
 
 export class UserId implements Encodable {
+    public static readonly keyLength = 32;
+
     private constructor(private readonly array: Uint8Array) { };
 
     public toString(): string {
@@ -80,7 +82,7 @@ export class UserId implements Encodable {
             identityKey = encodeBase64(identityKey);
         else if (identityKey instanceof IdentityKey)
             identityKey = (identityKey).toBytes();
-        return new UserId(crypto.hkdf(identityKey as Uint8Array, new Uint8Array(32).fill(0), "/freesignal/userid"));
+        return new UserId(crypto.hkdf(identityKey as Uint8Array, new Uint8Array(32).fill(0), "/freesignal/userid", UserId.keyLength));
     }
 
     public static from(userId: string | Uint8Array | UserId): UserId {

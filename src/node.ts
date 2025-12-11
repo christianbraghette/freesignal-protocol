@@ -22,7 +22,7 @@ import { Datagram, decryptData, DiscoverMessage, DiscoverType, encryptData, Encr
 import { KeyExchange } from "./x3dh";
 import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
-import { decodeData, encodeBase64, encodeData, compareBytes } from "@freesignal/utils";
+import { decodeData, encodeData, compareBytes, concatBytes, decodeBase64 } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import EventEmitter, { EventCall } from "easyemitter.ts";
 
@@ -172,9 +172,9 @@ export class FreeSignalNode {
         this.emitter.emit('send', await this.encrypt(receiverId, Protocols.MESSAGE, encodeData(data)));
     }
 
-    public async sendRelay(receiverId: string | UserId, data: Datagram): Promise<void> {
+    public async sendRelay(relayId: string | UserId, receiverId: string | UserId, data: Datagram): Promise<void> {
         //console.debug("Sending Relay");
-        this.emitter.emit('send', await this.encrypt(receiverId, Protocols.RELAY, data.toBytes()));
+        this.emitter.emit('send', await this.encrypt(relayId, Protocols.RELAY, concatBytes(UserId.from(receiverId).toBytes(), data.toBytes())));
     }
 
     public async sendPing(receiverId: string | UserId): Promise<void> {
@@ -264,10 +264,19 @@ export class FreeSignalNode {
                 this.emitter.emit('message', await this.decrypt(datagram));
                 return;
 
-            case Protocols.RELAY:
+            case Protocols.RELAY: {
                 //console.debug("Opening Relay");
-                this.emitter.emit('send', await this.decrypt(datagram));
+                const opened = await this.decrypt(datagram);
+                const userId = decodeBase64(opened.payload.subarray(0, UserId.keyLength));
+                const sessionTag = await this.users.get(userId);
+                if (!sessionTag)
+                    throw new Error("Session not found for user: " + userId);
+                const session = await this.sessions.get(sessionTag);
+                if (!session)
+                    throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
+                this.emitter.emit('send', { session, payload: opened.payload.slice(UserId.keyLength) });
                 return;
+            }
 
             case Protocols.DISCOVER: {
                 //console.debug("Opening Discover");

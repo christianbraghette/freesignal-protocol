@@ -1,5 +1,5 @@
-import { compareBytes, decodeBase64, decodeData, encodeData, encodeUTF8 } from "@freesignal/utils";
-import { AsyncMap, createNode, Datagram } from ".";
+import { decodeData } from "@freesignal/utils";
+import { AsyncMap, Datagram } from ".";
 import { FreeSignalNode } from "./node";
 
 console.log("FreeSignal protocol test");
@@ -29,5 +29,5 @@ setImmediate(async () => {
     await alice.sendData(bob.userId, "Hi Bob!");
     await Promise.all(["How are you?", "How are this days?", "For me it's a good time"].map(msg => bob.sendData(alice.userId, msg)));
     await alice.sendData(bob.userId, "Not so bad my man");
-    await Promise.all(["I'm thinking...", "His this secure?"].map(msg => bob.sendData(alice.userId, msg)));
+    await Promise.all(["I'm thinking...", "Is this secure?"].map(msg => bob.sendData(alice.userId, msg)));
 });
