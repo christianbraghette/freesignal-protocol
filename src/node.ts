@@ -157,7 +157,7 @@ export class FreeSignalNode {
             //console.debug("Sending Handshake Ack");
             const session = await this.sessions.get(data.sessionTag);
             if (!session)
-                throw new Error("Session not found for user: " + data);
+                throw new Error("Session not found for sessionTag: " + data.sessionTag);
             this.emitter.emit('send', await this.encrypt(session.userId, Protocols.HANDSHAKE, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, session.identityKey.exchangeKey)));
             return;
         }
@@ -276,7 +276,7 @@ export class FreeSignalNode {
                 const session = await this.sessions.get(sessionTag);
                 if (!session)
                     throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
-                this.emitter.emit('send', { session, payload: opened.payload.slice(UserId.keyLength), userId: session.userId });
+                this.emitter.emit('send', { session, datagram: Datagram.from(opened.payload.slice(UserId.keyLength)), userId: session.userId });
                 return;
             }
 
