@@ -62,7 +62,8 @@ type NodeEventData = {
     session?: KeySession,
     payload?: Uint8Array,
     datagram?: Datagram,
-    request?: BootstrapRequest
+    request?: BootstrapRequest,
+    userId?: UserId
 };
 
 type HandshakeEventData = {
@@ -71,7 +72,8 @@ type HandshakeEventData = {
 
 type SendEventData = {
     session?: KeySession,
-    datagram: Datagram
+    datagram: Datagram,
+    userId: UserId
 };
 
 type MessageEventData = {
@@ -145,7 +147,7 @@ export class FreeSignalNode {
             throw new Error("Session not found for sessionTag: " + sessionTag);
         const encrypted = encryptData(session, data);
         this.sessions.set(receiverId.toString(), session);
-        return { session, datagram: new EncryptedDatagram(protocol, session.sessionTag, encrypted).sign(this.privateIdentityKey.signatureKey) };
+        return { session, userId: UserId.from(receiverId), datagram: new EncryptedDatagram(protocol, session.sessionTag, encrypted).sign(this.privateIdentityKey.signatureKey) };
     }
 
     public async sendHandshake(data: KeyExchangeData): Promise<void>
@@ -164,7 +166,7 @@ export class FreeSignalNode {
         await this.sessions.set(session.sessionTag, session);
         await this.users.set(session.userId.toString(), session.sessionTag);
         const datagram = new Datagram(Protocols.HANDSHAKE, encodeData(message), session.sessionTag).sign(this.privateIdentityKey.signatureKey);
-        this.emitter.emit('send', { session, datagram });
+        this.emitter.emit('send', { session, datagram, userId: session.userId });
     }
 
     public async sendData<T>(receiverId: string | UserId, data: T): Promise<void> {
@@ -186,7 +188,7 @@ export class FreeSignalNode {
         if (!session)
             throw new Error("Session not found for sessionTag: " + sessionTag);
         const datagram = new Datagram(Protocols.PING, undefined, session.sessionTag);
-        this.emitter.emit('send', { session, datagram });
+        this.emitter.emit('send', { session, datagram, userId: session.userId });
     }
 
     public async sendDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<void> {
@@ -208,7 +210,7 @@ export class FreeSignalNode {
         if (await this.sessions.has(receiverId.toString()))
             throw new Error("Session exists");
         const datagram = new Datagram(Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
-        this.emitter.emit('send', { datagram });
+        this.emitter.emit('send', { datagram, userId: UserId.from(receiverId) });
     }
 
     protected async decrypt(datagram: EncryptedDatagram | Datagram | Uint8Array): Promise<MessageEventData> {
@@ -274,7 +276,7 @@ export class FreeSignalNode {
                 const session = await this.sessions.get(sessionTag);
                 if (!session)
                     throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
-                this.emitter.emit('send', { session, payload: opened.payload.slice(UserId.keyLength) });
+                this.emitter.emit('send', { session, payload: opened.payload.slice(UserId.keyLength), userId: session.userId });
                 return;
             }
 
