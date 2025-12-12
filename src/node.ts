@@ -24,17 +24,17 @@ import { ExportedKeySession, KeySession } from "./double-ratchet";
 import { createIdentity } from ".";
 import { decodeData, encodeData, compareBytes, concatBytes, decodeBase64 } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
-import EventEmitter, { EventCall } from "easyemitter.ts";
+import EventEmitter, { EventCallback } from "easyemitter.ts";
 
 export class BootstrapRequest extends EventEmitter<'change', BootstrapRequest> {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
 
     public constructor(public readonly senderId: UserId | string, private readonly keyExchangeData: KeyExchangeData) {
         super();
-        this.on('change', (data) => this.onChange(data));
+        this.on('change', (data, emitter) => this.onChange(data, emitter));
     }
 
-    public onChange: EventCall<'change', BootstrapRequest> = () => { };
+    public onChange: EventCallback<BootstrapRequest, this> = () => { };
 
     public get status() {
         return this.#status;
@@ -111,10 +111,10 @@ export class FreeSignalNode {
         this.emitter.on('bootstrap', this.bootstrapHandler);
     }
 
-    protected messageHandler: EventCall<"message", NodeEventData> = (data) => this.onMessage({ session: data.data?.session!, payload: data.data?.payload! })
-    protected sendHandler: EventCall<"send", NodeEventData> = (data) => this.onSend(data.data!.datagram!.toBytes());
-    protected handshakeHandler: EventCall<"handshake", NodeEventData> = (data) => this.onHandshake(UserId.from(data.data?.session?.userId!));
-    protected bootstrapHandler: EventCall<"bootstrap", NodeEventData> = (data) => this.onRequest(data.data?.request!);
+    protected messageHandler: EventCallback<NodeEventData, typeof this.emitter> = (data) => this.onMessage({ session: data.session!, payload: data.payload! })
+    protected sendHandler: EventCallback<NodeEventData, typeof this.emitter> = (data) => this.onSend(data.datagram!.toBytes());
+    protected handshakeHandler: EventCallback<NodeEventData, typeof this.emitter> = (data) => this.onHandshake(UserId.from(data.session?.userId!));
+    protected bootstrapHandler: EventCallback<NodeEventData, typeof this.emitter> = (data) => this.onRequest(data.request!);
 
     public onMessage: (data: MessageEventData) => void = () => { };
     public onSend: (data: Uint8Array) => void = () => { };
@@ -323,10 +323,10 @@ export class FreeSignalNode {
                 const keyExchangeData = decodeData<KeyExchangeData>(datagram.payload);
                 const userId = UserId.fromKey(keyExchangeData.identityKey);
                 const request = new BootstrapRequest(userId, keyExchangeData);
-                request.onChange = (event) => {
+                request.onChange = (request) => {
                     if (!request.data)
                         throw new Error("Error sending handshake");
-                    this.sendHandshake(event.data?.data!);
+                    this.sendHandshake(request.data);
                 }
                 await this.bootstraps.set(userId.toString(), request);
                 this.emitter.emit('bootstrap', { request });
