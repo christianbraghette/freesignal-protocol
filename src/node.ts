@@ -205,11 +205,15 @@ export class FreeSignalNode {
         this.emitter.emit('send', await this.encrypt(receiverId, Protocols.DISCOVER, encodeData(message)));
     }
 
+    public async packBootstrap() {
+        return new Datagram(Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
+    }
+
     public async sendBootstrap(receiverId: string | UserId): Promise<void> {
         //console.debug("Sending Bootstrap");
         if (await this.sessions.has(receiverId.toString()))
             throw new Error("Session exists");
-        const datagram = new Datagram(Protocols.BOOTSTRAP, encodeData(await this.keyExchange.generateData()));
+        const datagram = await this.packBootstrap();
         this.emitter.emit('send', { datagram, userId: UserId.from(receiverId) });
     }
 
@@ -229,6 +233,31 @@ export class FreeSignalNode {
         return { session, payload: decrypted };
     }
 
+    protected async openHandshake(datagram: Datagram | EncryptedDatagram | Uint8Array): Promise<'syn' | 'ack'> {
+        const encrypted = EncryptedDatagram.from(datagram);
+        if (!encrypted.payload)
+            throw new Error("Missing payload");
+        if (await this.sessions.has(encrypted.sessionTag)) {
+            //console.debug("Opening Handshake Ack");
+            const session = await this.sessions.get(encrypted.sessionTag);
+            const { payload } = await this.decrypt(encrypted);
+            if (!session)
+                throw new Error("Session not found for sessionTag: " + encrypted.sessionTag);
+            if (!compareBytes(payload, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, session.identityKey.exchangeKey)))
+                throw new Error("Error validating handshake data");
+            return 'ack';
+        }
+        //console.debug("Opening Handshake Syn");
+        const data = decodeData<KeyExchangeSynMessage>(encrypted.payload);
+        if (!encrypted.verify(IdentityKey.from(data.identityKey).signatureKey))
+            throw new Error("Signature not verified");
+        const { session, associatedData } = await this.keyExchange.digestMessage(data);
+        await this.sessions.set(session.sessionTag, session);
+        await this.users.set(session.userId.toString(), session.sessionTag);
+        await this.bundles.set(session.userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
+        return 'syn';
+    }
+
     protected async open(datagram: Datagram | EncryptedDatagram | Uint8Array): Promise<void> {
         if (datagram instanceof Uint8Array)
             datagram = Datagram.from(datagram);
@@ -237,25 +266,11 @@ export class FreeSignalNode {
                 const encrypted = EncryptedDatagram.from(datagram);
                 if (!encrypted.payload)
                     throw new Error("Missing payload");
-                if (await this.sessions.has(encrypted.sessionTag)) {
-                    //console.debug("Opening Handshake Ack");
-                    const session = await this.sessions.get(encrypted.sessionTag);
-                    const { payload } = await this.decrypt(encrypted);
-                    if (!session)
-                        throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
-                    if (!compareBytes(payload, crypto.ECDH.scalarMult(this.privateIdentityKey.exchangeKey, session.identityKey.exchangeKey)))
-                        throw new Error("Error validating handshake data");
-                    this.emitter.emit('handshake', { session });
+                if (await this.openHandshake(datagram) === 'ack')
                     return;
-                }
-                //console.debug("Opening Handshake Syn");
-                const data = decodeData<KeyExchangeSynMessage>(encrypted.payload);
-                if (!datagram.verify(IdentityKey.from(data.identityKey).signatureKey))
-                    throw new Error("Signature not verified");
-                const { session, associatedData } = await this.keyExchange.digestMessage(data);
-                await this.sessions.set(session.sessionTag, session);
-                await this.users.set(session.userId.toString(), session.sessionTag);
-                await this.bundles.set(session.userId.toString(), decodeData<KeyExchangeDataBundle>(associatedData));
+                const session = await this.sessions.get(encrypted.sessionTag);
+                if (!session)
+                    throw new Error("Session not found for sessionTag: " + encrypted.sessionTag);
                 await this.sendHandshake(session);
                 this.emitter.emit('handshake', { session });
                 return;
