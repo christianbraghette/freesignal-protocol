@@ -29,7 +29,7 @@ import EventEmitter, { EventCallback } from "easyemitter.ts";
 export class BootstrapRequest extends EventEmitter<'change', BootstrapRequest> {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';
 
-    public constructor(public readonly senderId: UserId | string, private readonly keyExchangeData: KeyExchangeData) {
+    public constructor(public readonly senderId: UserId | string, public readonly data: KeyExchangeData) {
         super();
         this.on('change', (data, emitter) => this.onChange(data, emitter));
     }
@@ -40,25 +40,23 @@ export class BootstrapRequest extends EventEmitter<'change', BootstrapRequest> {
         return this.#status;
     }
 
-    public get data(): KeyExchangeData | undefined {
-        return this.#status === 'accepted' ? this.keyExchangeData : undefined;
-    }
-
     public accept(): void {
-        if (this.status === 'pending')
+        if (this.status === 'pending') {
             this.#status = 'accepted';
-        this.emit('change', this);
+            this.emit('change', this);
+        }
     }
 
     public deny(): void {
-        if (this.status === 'pending')
+        if (this.status === 'pending') {
             this.#status = 'denied';
-        this.emit('change', this);
+            this.emit('change', this);
+        }
     }
 
 }
 
-type NodeEventData = {
+export type NodeEventData = {
     session?: KeySession,
     payload?: Uint8Array,
     datagram?: Datagram,
@@ -66,17 +64,17 @@ type NodeEventData = {
     userId?: UserId
 };
 
-type HandshakeEventData = {
+export type HandshakeEventData = {
     session: KeySession
 };
 
-type SendEventData = {
+export type SendEventData = {
     session?: KeySession,
     datagram: Datagram,
     userId: UserId
 };
 
-type MessageEventData = {
+export type MessageEventData = {
     session: KeySession,
     payload: Uint8Array
 };
@@ -338,10 +336,12 @@ export class FreeSignalNode {
                 const keyExchangeData = decodeData<KeyExchangeData>(datagram.payload);
                 const userId = UserId.fromKey(keyExchangeData.identityKey);
                 const request = new BootstrapRequest(userId, keyExchangeData);
+                let sended = false;
                 request.onChange = (request) => {
-                    if (!request.data)
-                        throw new Error("Error sending handshake");
-                    this.sendHandshake(request.data);
+                    if (request.status === 'accepted' && !sended) {
+                        sended = true;
+                        this.sendHandshake(request.data);
+                    }
                 }
                 await this.bootstraps.set(userId.toString(), request);
                 this.emitter.emit('bootstrap', { request });
