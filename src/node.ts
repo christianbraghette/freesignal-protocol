@@ -18,13 +18,13 @@
  */
 
 import { Database, LocalStorage, Crypto, KeyExchangeDataBundle, KeyExchangeData, KeyExchangeSynMessage } from "@freesignal/interfaces";
-import { Datagram, decryptData, DiscoverMessage, DiscoverType, encryptData, EncryptedDatagram, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types";
-import { KeyExchange } from "./x3dh";
-import { ExportedKeySession, KeySession } from "./double-ratchet";
-import { createIdentity } from ".";
+import { Datagram, decryptData, DiscoverMessage, DiscoverType, encryptData, EncryptedDatagram, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types.js";
+import { KeyExchange } from "./x3dh.js";
+import { ExportedKeySession, KeySession } from "./double-ratchet.js";
+import { createIdentity } from "./index.js";
 import { decodeData, encodeData, compareBytes, concatBytes, decodeBase64 } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
-import EventEmitter, { EventCallback } from "easyemitter.ts";
+import { EventEmitter, EventCallback } from "easyemitter.ts";
 
 export class BootstrapRequest extends EventEmitter<'change', BootstrapRequest> {
     #status: 'pending' | 'accepted' | 'denied' = 'pending';

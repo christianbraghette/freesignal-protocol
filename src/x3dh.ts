@@ -19,10 +19,10 @@
 
 import crypto from "@freesignal/crypto";
 import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
-import { KeySession } from "./double-ratchet";
+import { KeySession } from "./double-ratchet.js";
 import { concatBytes, decodeBase64, encodeBase64, compareBytes } from "@freesignal/utils";
-import { decryptData, encryptData, IdentityKey, PrivateIdentityKey } from "./types";
-import { createIdentity } from ".";
+import { decryptData, encryptData, IdentityKey, PrivateIdentityKey } from "./types.js";
+import { createIdentity } from "./index.js";
 
 export interface ExportedKeyExchange {
     privateIdentityKey: PrivateIdentityKey;
@@ -89,7 +89,7 @@ export class KeyExchange {
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = encodeBase64(message.signedPreKey);
         const identityKey = IdentityKey.from(message.identityKey);
-        if (!crypto.EdDSA.verify(crypto.hash(signedPreKey), encodeBase64(message.signature), identityKey.signatureKey))
+        if (!crypto.EdDSA.verify(encodeBase64(message.signature), crypto.hash(signedPreKey), identityKey.signatureKey))
             throw new Error("Signature verification failed");
         const onetimePreKey = message.onetimePreKey ? encodeBase64(message.onetimePreKey) : undefined;
         const signedPreKeyHash = crypto.hash(signedPreKey);

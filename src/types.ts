@@ -20,7 +20,7 @@
 import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes, compareBytes } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import type { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
-import { EncryptionKeys, KeySession } from "./double-ratchet";
+import { EncryptionKeys, KeySession } from "./double-ratchet.js";
 
 export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
     const key = session.getSendingKey();
@@ -316,8 +316,8 @@ export class Datagram implements Encodable {
         if (!this._signature)
             throw new Error("Datagram not signed");
         return crypto.EdDSA.verify(
-            this.unsigned,
             this._signature,
+            this.unsigned,
             publicKey
         );
     }

@@ -1,6 +1,6 @@
 import { decodeData } from "@freesignal/utils";
-import { AsyncMap, Datagram } from ".";
-import { FreeSignalNode } from "./node";
+import { AsyncMap, Datagram } from "./index.js";
+import { FreeSignalNode } from "./node.js";
 
 console.log("FreeSignal protocol test");
 

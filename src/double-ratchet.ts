@@ -20,7 +20,7 @@
 import crypto from "@freesignal/crypto";
 import { Crypto } from "@freesignal/interfaces";
 import { decodeBase64, encodeBase64, compareBytes } from "@freesignal/utils";
-import { IdentityKey, UserId } from "./types";
+import { IdentityKey, UserId } from "./types.js";
 
 export interface ExportedKeySession {
     identityKey: string;

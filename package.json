@@ -1,10 +1,10 @@
 {
   "name": "@freesignal/protocol",
-  "version": "0.7.11",
+  "version": "0.8.0",
   "description": "Signal Protocol implementation in javascript",
   "license": "GPL-3.0-or-later",
   "author": "Christian Braghette",
-  "type": "commonjs",
+  "type": "module",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -34,10 +34,10 @@
     "prepare": "tsc"
   },
   "dependencies": {
-    "@freesignal/crypto": "^0.3.0",
-    "@freesignal/interfaces": "^0.2.0",
-    "@freesignal/utils": "^1.4.1",
-    "easyemitter.ts": "^1.0.3"
+    "@freesignal/crypto": "^0.4.2",
+    "@freesignal/interfaces": "^0.3.0",
+    "@freesignal/utils": "^1.5.1",
+    "easyemitter.ts": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.2.1"

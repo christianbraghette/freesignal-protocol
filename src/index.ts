@@ -19,9 +19,9 @@
 
 import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto, Database, KeyExchangeDataBundle } from "@freesignal/interfaces";
-import { ExportedKeySession } from "./double-ratchet";
-import { PrivateIdentityKey } from "./types";
-import { BootstrapRequest, FreeSignalNode } from "./node";
+import { ExportedKeySession } from "./double-ratchet.js";
+import { PrivateIdentityKey } from "./types.js";
+import { BootstrapRequest, FreeSignalNode } from "./node.js";
 
 /**
  * Generates identity key
@@ -30,8 +30,9 @@ import { BootstrapRequest, FreeSignalNode } from "./node";
  * @returns An object containing readonly signing and box key pairs.
  */
 export function createIdentity(seed?: Uint8Array): PrivateIdentityKey {
-    seed ??= crypto.randomBytes(crypto.EdDSA.seedLength);
-    const signatureSeed = crypto.hkdf(seed, new Uint8Array(crypto.EdDSA.seedLength).fill(0), "identity-ed25519", crypto.EdDSA.seedLength);
+    const seedLength = 32;
+    seed ??= crypto.randomBytes(seedLength);
+    const signatureSeed = crypto.hkdf(seed, new Uint8Array(seedLength).fill(0), "identity-ed25519", seedLength);
     const exchangeSeed = crypto.hkdf(seed, new Uint8Array(crypto.ECDH.secretKeyLength).fill(0), "identity-x25519", crypto.ECDH.secretKeyLength);
     const signatureKeyPair = crypto.EdDSA.keyPairFromSeed(signatureSeed);
     const exchangeKeyPair = crypto.ECDH.keyPair(exchangeSeed);
@@ -49,4 +50,4 @@ export function createNode(storage: Database<{
     return new FreeSignalNode(storage, privateIdentityKey);
 }
 
-export * from "./types";
+export * from "./types.js";
