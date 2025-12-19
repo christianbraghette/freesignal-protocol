@@ -1,6 +1,6 @@
 {
   "name": "@freesignal/protocol",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Signal Protocol implementation in javascript",
   "license": "GPL-3.0-or-later",
   "author": "Christian Braghette",

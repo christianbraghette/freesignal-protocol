@@ -148,9 +148,16 @@ export class FreeSignalNode {
         return { session, userId: UserId.from(receiverId), datagram: new EncryptedDatagram(protocol, session.sessionTag, encrypted).sign(this.privateIdentityKey.signatureKey) };
     }
 
-    public async sendHandshake(data: KeyExchangeData): Promise<void>
-    public async sendHandshake(session: KeySession): Promise<void>
-    public async sendHandshake(data: KeyExchangeData | KeySession): Promise<void> {
+    public async sendHandshake(data: KeyExchangeData): Promise<void>;
+    public async sendHandshake(session: KeySession): Promise<void>;
+    public async sendHandshake(userId: UserId | string): Promise<void>;
+    public async sendHandshake(data: KeyExchangeData | KeySession | UserId | string): Promise<void> {
+        if (data instanceof UserId || typeof data === 'string') {
+            const session = await this.sessions.get(data.toString());
+            if (!session)
+                throw new Error("Session not found for userId: " + data.toString());
+            data = session;
+        }
         if (data instanceof KeySession) {
             //console.debug("Sending Handshake Ack");
             const session = await this.sessions.get(data.sessionTag);
