@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes, compareBytes } from "@freesignal/utils";
+import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes, compareBytes, decodeBase64URL } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
 import type { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptionKeys, KeySession } from "./double-ratchet.js";
@@ -66,7 +66,11 @@ export class UserId implements Encodable {
     private constructor(private readonly array: Uint8Array) { };
 
     public toString(): string {
-        return decodeBase64(this.array)
+        return decodeBase64(this.array);
+    }
+
+    public toUrl(): string {
+        return decodeBase64URL(this.array);
     }
 
     public toJSON(): string {
@@ -224,7 +228,8 @@ export interface DiscoverMessage {
 }
 
 export enum Protocols {
-    PING = '/freesignal/ping',
+    NULL = '',
+    //PING = '/freesignal/ping',
     MESSAGE = '/freesignal/message',
     RELAY = '/freesignal/relay',
     HANDSHAKE = '/freesignal/handshake',

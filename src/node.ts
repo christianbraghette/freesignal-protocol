@@ -87,7 +87,7 @@ export class FreeSignalNode {
     protected readonly keyExchange: KeyExchange;
     protected readonly discovers: Set<string> = new Set();
     protected readonly bootstraps: LocalStorage<string, BootstrapRequest>;
-    protected readonly emitter = new EventEmitter<'send' | 'handshake' | 'message' | 'ping' | 'bootstrap', NodeEventData>();
+    protected readonly emitter = new EventEmitter<'send' | 'handshake' | 'message' | 'bootstrap', NodeEventData>();
 
     public constructor(storage: Database<{
         sessions: LocalStorage<string, ExportedKeySession>,
@@ -123,10 +123,13 @@ export class FreeSignalNode {
         return this.bootstraps.get(userId);
     }
 
-    public async waitHandshaked(userId: UserId | string, timeout?: number): Promise<void> {
-        if (timeout)
-            setTimeout(() => { throw new Error(); }, timeout);
-        while ((await this.emitter.wait('handshake', timeout))?.session?.userId.toString() !== userId.toString());
+    public waitHandshaked(userId: UserId | string, timeout?: number): Promise<void> {
+        return new Promise(async (resolve, reject) => {
+            if (timeout)
+                setTimeout(() => reject(), timeout);
+            while ((await this.emitter.wait('handshake', timeout))?.session?.userId.toString() !== userId.toString());
+            resolve();
+        });
     }
 
     public get identityKey(): IdentityKey {
@@ -184,7 +187,7 @@ export class FreeSignalNode {
         this.emitter.emit('send', await this.encrypt(relayId, Protocols.RELAY, concatBytes(UserId.from(receiverId).toBytes(), data.toBytes())));
     }
 
-    public async sendPing(receiverId: string | UserId): Promise<void> {
+    /*public async sendPing(receiverId: string | UserId): Promise<void> {
         //console.debug("Sending Ping");
         const sessionTag = await this.users.get(receiverId.toString());
         if (!sessionTag)
@@ -194,7 +197,7 @@ export class FreeSignalNode {
             throw new Error("Session not found for sessionTag: " + sessionTag);
         const datagram = new Datagram(Protocols.PING, undefined, session.sessionTag);
         this.emitter.emit('send', { session, datagram, userId: session.userId });
-    }
+    }*/
 
     public async sendDiscover(receiverId: string | UserId, discoverId: string | UserId): Promise<void> {
         //console.debug("Sending Discover");
@@ -271,12 +274,12 @@ export class FreeSignalNode {
                 const encrypted = EncryptedDatagram.from(datagram);
                 if (!encrypted.payload)
                     throw new Error("Missing payload");
-                if (await this.openHandshake(datagram) === 'ack')
-                    return;
+                const handshakeState = await this.openHandshake(datagram)
                 const session = await this.sessions.get(encrypted.sessionTag);
                 if (!session)
                     throw new Error("Session not found for sessionTag: " + encrypted.sessionTag);
-                await this.sendHandshake(session);
+                if (handshakeState === 'syn')
+                    await this.sendHandshake(session);
                 this.emitter.emit('handshake', { session });
                 return;
             }
@@ -355,19 +358,25 @@ export class FreeSignalNode {
                 return;
             }
 
-            case Protocols.PING:
+            /*case Protocols.PING:
                 datagram = EncryptedDatagram.from(datagram);
                 const session = await this.sessions.get(datagram.sessionTag!);
                 if (!session)
                     throw new Error("Session not found for sessionTag: " + datagram.sessionTag);
                 this.emitter.emit('ping', { session });
-                return;
+                return;*/
 
             default:
                 throw new Error("Invalid protocol");
         }
 
     }
+
+    /*public toJSON() {
+        return {
+            privateIdentityKey: this.privateIdentityKey.toString()
+        }
+    }*/
 }
 
 class SessionMap implements LocalStorage<string, KeySession> {
