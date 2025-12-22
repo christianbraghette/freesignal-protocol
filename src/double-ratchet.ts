@@ -26,8 +26,8 @@ export interface ExportedKeySession {
     identityKey: string;
     secretKey: string;
     rootKey: string;
-    sendingChain?: ExportedKeyChain;
-    receivingChain?: ExportedKeyChain;
+    sendingChain?: KeyChainState;
+    receivingChain?: KeyChainState;
     headerKey?: string;
     headerKeys: [string, Uint8Array][];
     previousKeys: [string, Uint8Array][];
@@ -189,7 +189,7 @@ export class KeySession {
     }
 }
 
-interface ExportedKeyChain {
+interface KeyChainState {
     publicKey: string;
     remoteKey: string;
     chainKey: string;
@@ -220,7 +220,7 @@ class KeyChain {
         return this._count;
     }
 
-    public toJSON(): ExportedKeyChain {
+    public toJSON(): KeyChainState {
         return {
             publicKey: decodeBase64(this.publicKey),
             remoteKey: decodeBase64(this.remoteKey),
@@ -232,7 +232,7 @@ class KeyChain {
         }
     }
 
-    public static from(obj: ExportedKeyChain): KeyChain {
+    public static from(obj: KeyChainState): KeyChain {
         //
         const chain = new KeyChain(encodeBase64(obj.publicKey), encodeBase64(obj.remoteKey), encodeBase64(obj.chainKey), encodeBase64(obj.nextHeaderKey), obj.headerKey ? encodeBase64(obj.headerKey) : undefined, obj.previousCount);
         chain._count = obj.count;

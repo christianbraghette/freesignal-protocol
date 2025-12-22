@@ -19,7 +19,7 @@
 
 import { concatBytes, decodeBase64, encodeBase64, bytesToNumber, numberToBytes, compareBytes, decodeBase64URL } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
-import type { LocalStorage, Encodable, KeyExchangeData } from "@freesignal/interfaces";
+import type { Encodable, KeyExchangeData } from "@freesignal/interfaces";
 import { EncryptionKeys, KeySession } from "./double-ratchet.js";
 
 export function encryptData(session: KeySession, data: Uint8Array): EncryptedData {
@@ -230,10 +230,10 @@ export interface DiscoverMessage {
 export enum Protocols {
     NULL = '',
     //PING = '/freesignal/ping',
+    //DISCOVER = '/freesignal/discover',
     MESSAGE = '/freesignal/message',
     RELAY = '/freesignal/relay',
     HANDSHAKE = '/freesignal/handshake',
-    DISCOVER = '/freesignal/discover',
     BOOTSTRAP = '/freesignal/bootstrap'
 }
 export namespace Protocols {
@@ -494,7 +494,7 @@ export class EncryptedData implements Encodable {
     }
 }
 
-export class AsyncMap<K, V> implements LocalStorage<K, V> {
+/*class AsyncMap<K, V> implements LocalStorage<K, V> {
     private readonly map: Map<K, V>;
 
     constructor(iterable?: Iterable<readonly [K, V]>) {
@@ -525,4 +525,4 @@ export class AsyncMap<K, V> implements LocalStorage<K, V> {
     async entries(): Promise<Iterable<[K, V]>> {
         return this.map.entries();
     }
-}
+}*/

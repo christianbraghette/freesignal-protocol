@@ -1,5 +1,5 @@
 import { decodeBase64, decodeData } from "@freesignal/utils";
-import { AsyncMap, Datagram } from "./index.js";
+import { Datagram } from "./index.js";
 import { FreeSignalNode } from "./node.js";
 import crypto from "@freesignal/crypto";
 
@@ -12,8 +12,8 @@ class TestNode extends FreeSignalNode {
     }
 }
 
-const bob = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
-const alice = new TestNode({ keyExchange: new AsyncMap(), sessions: new AsyncMap(), users: new AsyncMap(), bundles: new AsyncMap(), bootstraps: new AsyncMap() });
+const bob = new TestNode();
+const alice = new TestNode();
 
 //bob.onHandshaked = (userId) => console.log(userId.toString());
 bob.onSend = (data) => alice.open(data);
@@ -24,7 +24,7 @@ alice.onMessage = (data) => console.log("Bob: ", decodeData<string>(data.payload
 alice.onRequest = (request) => request.accept();
 
 setImmediate(async () => {
-    await bob.sendBootstrap(alice.userId);
+    bob.sendBootstrap(alice.userId);
     await bob.waitHandshaked(alice.userId);
     await bob.sendData(alice.userId, "Hi Alice!");
     await alice.sendData(bob.userId, "Hi Bob!");

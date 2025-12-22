@@ -21,7 +21,7 @@ import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto, Database, KeyExchangeDataBundle } from "@freesignal/interfaces";
 import { ExportedKeySession } from "./double-ratchet.js";
 import { PrivateIdentityKey } from "./types.js";
-import { BootstrapRequest, FreeSignalNode } from "./node.js";
+import { BootstrapRequest, FreeSignalNode, FreeSignalNodeState } from "./node.js";
 
 /**
  * Generates identity key
@@ -40,14 +40,8 @@ export function createIdentity(seed?: Uint8Array): PrivateIdentityKey {
 }
 
 /** */
-export function createNode(storage: Database<{
-    sessions: LocalStorage<string, ExportedKeySession>;
-    users: LocalStorage<string, string>;
-    keyExchange: LocalStorage<string, Crypto.KeyPair>;
-    bundles: LocalStorage<string, KeyExchangeDataBundle>;
-    bootstraps: LocalStorage<string, BootstrapRequest>;
-}>, privateIdentityKey?: PrivateIdentityKey): FreeSignalNode {
-    return new FreeSignalNode(storage, privateIdentityKey);
+export function createNode(args?: Partial<FreeSignalNodeState>): FreeSignalNode {
+    return new FreeSignalNode(args);
 }
 
 export * from "./types.js";

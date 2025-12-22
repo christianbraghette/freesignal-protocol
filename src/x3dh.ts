@@ -18,13 +18,13 @@
  */
 
 import crypto from "@freesignal/crypto";
-import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, LocalStorage, Crypto } from "@freesignal/interfaces";
+import { KeyExchangeData, KeyExchangeDataBundle, KeyExchangeSynMessage, Crypto } from "@freesignal/interfaces";
 import { KeySession } from "./double-ratchet.js";
 import { concatBytes, decodeBase64, encodeBase64, compareBytes } from "@freesignal/utils";
 import { decryptData, encryptData, IdentityKey, PrivateIdentityKey } from "./types.js";
 import { createIdentity } from "./index.js";
 
-export interface ExportedKeyExchange {
+export interface KeyExchangeState {
     privateIdentityKey: PrivateIdentityKey;
     storage: Array<[string, Crypto.KeyPair]>;
 }
@@ -35,10 +35,10 @@ export class KeyExchange {
     private static readonly maxOPK = 10;
 
     private readonly privateIdentityKey: PrivateIdentityKey;
-    private readonly storage: LocalStorage<string, Crypto.KeyPair>;
+    private readonly storage: Map<string, Crypto.KeyPair>;
 
-    public constructor(storage: LocalStorage<string, Crypto.KeyPair>, privateIdentityKey?: PrivateIdentityKey) {
-        this.storage = storage;
+    public constructor({ storage, privateIdentityKey }: Partial<KeyExchangeState> = {}) {
+        this.storage = new Map(storage);
         this.privateIdentityKey = privateIdentityKey ?? createIdentity();
     }
 
@@ -60,7 +60,7 @@ export class KeyExchange {
         return { onetimePreKey, onetimePreKeyHash };
     }
 
-    public async generateBundle(length?: number): Promise<KeyExchangeDataBundle> {
+    public generateBundle(length?: number): KeyExchangeDataBundle {
         const { signedPreKey, signedPreKeyHash } = this.generateSPK();
         const onetimePreKey = new Array(length ?? KeyExchange.maxOPK).fill(0).map(() => this.generateOPK(signedPreKeyHash).onetimePreKey);
         return {
@@ -72,7 +72,7 @@ export class KeyExchange {
         }
     }
 
-    public async generateData(): Promise<KeyExchangeData> {
+    public generateData(): KeyExchangeData {
         const { signedPreKey, signedPreKeyHash } = this.generateSPK();
         const { onetimePreKey } = this.generateOPK(signedPreKeyHash);
         return {
@@ -84,7 +84,7 @@ export class KeyExchange {
         }
     }
 
-    public async digestData(message: KeyExchangeData, associatedData?: Uint8Array): Promise<{ session: KeySession; message: KeyExchangeSynMessage; }> {
+    public digestData(message: KeyExchangeData, associatedData?: Uint8Array): { session: KeySession; message: KeyExchangeSynMessage; } {
         //console.debug("Digest Data")
         const ephemeralKey = crypto.ECDH.keyPair();
         const signedPreKey = encodeBase64(message.signedPreKey);
@@ -118,11 +118,11 @@ export class KeyExchange {
         }
     }
 
-    public async digestMessage(message: KeyExchangeSynMessage): Promise<{ session: KeySession, associatedData: Uint8Array }> {
+    public digestMessage(message: KeyExchangeSynMessage): { session: KeySession, associatedData: Uint8Array } {
         //console.debug("Digest Message")
-        const signedPreKey = await this.storage.get(message.signedPreKeyHash);
+        const signedPreKey = this.storage.get(message.signedPreKeyHash);
         const hash = message.signedPreKeyHash.concat(message.onetimePreKeyHash);
-        const onetimePreKey = await this.storage.get(hash);
+        const onetimePreKey = this.storage.get(hash);
         const identityKey = IdentityKey.from(message.identityKey);
         if (!signedPreKey || !onetimePreKey || !message.identityKey || !message.ephemeralKey)
             throw new Error("ACK message malformed");
@@ -144,6 +144,13 @@ export class KeyExchange {
         return {
             session,
             associatedData: data.subarray(64)
+        };
+    }
+
+    public toJSON(): KeyExchangeState {
+        return {
+            privateIdentityKey: this.privateIdentityKey,
+            storage: Array.from(this.storage.entries())
         };
     }
 }
