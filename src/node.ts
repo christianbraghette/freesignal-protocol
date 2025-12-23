@@ -20,7 +20,7 @@
 import { KeyExchangeDataBundle, KeyExchangeData, KeyExchangeSynMessage, Crypto } from "@freesignal/interfaces";
 import { Datagram, decryptData, encryptData, EncryptedDatagram, IdentityKey, PrivateIdentityKey, Protocols, UserId } from "./types.js";
 import { KeyExchange } from "./x3dh.js";
-import { ExportedKeySession as KeySessionState, KeySession } from "./double-ratchet.js";
+import { KeySessionState as KeySessionState, KeySession } from "./double-ratchet.js";
 import { createIdentity } from "./index.js";
 import { decodeData, encodeData, compareBytes, concatBytes, decodeBase64 } from "@freesignal/utils";
 import crypto from "@freesignal/crypto";
@@ -169,7 +169,6 @@ export class FreeSignalNode {
             if (!session)
                 throw new Error("Session not found for sessionTag: " + sessionTag);
             const encrypted = encryptData(session, data);
-            this.sessions.set(receiverId.toString(), session);
             return { session, userId: UserId.from(receiverId), datagram: new EncryptedDatagram(protocol, session.sessionTag, encrypted).sign(this.privateIdentityKey.signatureKey) };
         } catch (error) {
             this.error(error);
@@ -183,9 +182,12 @@ export class FreeSignalNode {
     public async sendHandshake(data: KeyExchangeData | KeySession | UserId | string): Promise<void> {
         try {
             if (data instanceof UserId || typeof data === 'string') {
-                const session = this.sessions.get(data.toString());
+                const sessionTag = this.users.get(data.toString());
+                if (!sessionTag)
+                    throw new Error("User not found: " + data.toString());
+                const session = this.sessions.get(sessionTag);
                 if (!session)
-                    throw new Error("Session not found for userId: " + data.toString());
+                    throw new Error("Session not found for sessionTag: " + sessionTag);
                 data = session;
             }
             if (data instanceof KeySession) {
@@ -251,7 +253,8 @@ export class FreeSignalNode {
     public async sendBootstrap(receiverId: string | UserId): Promise<void> {
         try {
             //console.debug("Sending Bootstrap");
-            if (this.sessions.has(receiverId.toString()))
+            const sessionTag = this.users.get(receiverId.toString())
+            if (sessionTag && this.sessions.has(sessionTag))
                 throw new Error("Session exists");
             const datagram = this.packBootstrap();
             this.emitter.emit('send', { datagram, userId: UserId.from(receiverId) });
@@ -274,7 +277,6 @@ export class FreeSignalNode {
             if (!datagram.payload)
                 throw new Error("Missing payload");
             const decrypted = decryptData(session, datagram.payload);
-            this.sessions.set(datagram.sessionTag, session);
             return { session, payload: decrypted };
         } catch (error) {
             this.error(error);

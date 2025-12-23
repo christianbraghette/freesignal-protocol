@@ -1,6 +1,6 @@
 {
   "name": "@freesignal/protocol",
-  "version": "0.9.1",
+  "version": "0.9.3",
   "description": "Signal Protocol implementation in TypeScript",
   "license": "GPL-3.0-or-later",
   "author": "Christian Braghette",

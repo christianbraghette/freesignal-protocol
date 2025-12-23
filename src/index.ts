@@ -19,7 +19,7 @@
 
 import crypto from "@freesignal/crypto";
 import { LocalStorage, Crypto, Database, KeyExchangeDataBundle } from "@freesignal/interfaces";
-import { ExportedKeySession } from "./double-ratchet.js";
+import { KeySessionState } from "./double-ratchet.js";
 import { PrivateIdentityKey } from "./types.js";
 import { BootstrapRequest, FreeSignalNode, FreeSignalNodeState } from "./node.js";
 
