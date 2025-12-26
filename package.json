@@ -19,8 +19,8 @@
     "prepare": "tsc"
   },
   "dependencies": {
-    "@freesignal/crypto": "^0.4.2",
-    "@freesignal/interfaces": "^0.3.0",
+    "@freesignal/crypto": "^0.10.1",
+    "@freesignal/interfaces": "^0.10.0",
     "easyemitter.ts": "^1.2.0"
   },
   "devDependencies": {
