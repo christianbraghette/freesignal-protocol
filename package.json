@@ -1,6 +1,6 @@
 {
   "name": "@freesignal/protocol",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "Signal Protocol implementation in TypeScript",
   "license": "GPL-3.0-or-later",
   "author": "Christian Braghette",
@@ -10,21 +10,6 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
-    },
-    "./double-ratchet": {
-      "import": "./dist/double-ratchet.js",
-      "require": "./dist/double-ratchet.js",
-      "types": "./dist/double-ratchet.d.ts"
-    },
-    "./node": {
-      "import": "./dist/node.js",
-      "require": "./dist/node.js",
-      "types": "./dist/node.d.ts"
-    },
-    "./x3dh": {
-      "import": "./dist/x3dh.js",
-      "require": "./dist/x3dh.js",
-      "types": "./dist/x3dh.d.ts"
     }
   },
   "main": "./dist/index.js",
@@ -36,8 +21,7 @@
   "dependencies": {
     "@freesignal/crypto": "^0.4.2",
     "@freesignal/interfaces": "^0.3.0",
-    "@freesignal/utils": "^1.5.1",
-    "easyemitter.ts": "^1.1.0"
+    "easyemitter.ts": "^1.2.0"
   },
   "devDependencies": {
     "@types/node": "^24.2.1"

@@ -17,31 +17,5 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import crypto from "@freesignal/crypto";
-import { LocalStorage, Crypto, Database, KeyExchangeDataBundle } from "@freesignal/interfaces";
-import { KeySessionState } from "./double-ratchet.js";
-import { PrivateIdentityKey } from "./types.js";
-import { BootstrapRequest, FreeSignalNode, FreeSignalNodeState } from "./node.js";
-
-/**
- * Generates identity key
- *
- * @param seed - Seed to generate the key.
- * @returns An object containing readonly signing and box key pairs.
- */
-export function createIdentity(seed?: Uint8Array): PrivateIdentityKey {
-    const seedLength = 32;
-    seed ??= crypto.randomBytes(seedLength);
-    const signatureSeed = crypto.hkdf(seed, new Uint8Array(seedLength).fill(0), "identity-ed25519", seedLength);
-    const exchangeSeed = crypto.hkdf(seed, new Uint8Array(crypto.ECDH.secretKeyLength).fill(0), "identity-x25519", crypto.ECDH.secretKeyLength);
-    const signatureKeyPair = crypto.EdDSA.keyPairFromSeed(signatureSeed);
-    const exchangeKeyPair = crypto.ECDH.keyPair(exchangeSeed);
-    return PrivateIdentityKey.from(signatureKeyPair.secretKey, exchangeKeyPair.secretKey);
-}
-
-/** */
-export function createNode(args?: Partial<FreeSignalNodeState>): FreeSignalNode {
-    return new FreeSignalNode(args);
-}
-
-export * from "./types.js";
+export { UserFactoryConstructor as UserFactory } from "./user.js"
+export { InMemoryKeystoreFactory } from "./keystore.js"
