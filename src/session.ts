@@ -17,7 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { compareBytes, decodeBase64, encodeBase64 } from "@freesignal/crypto/utils";
 import { Crypto, Bytes, InitialSessionState, KeyChainState, KeyStore, Session, SessionManager, Ciphertext, UserId } from "@freesignal/interfaces";
 import { useConstructors } from "./constructors.js";
 
@@ -32,13 +31,11 @@ interface PrivateEncryptionKeys extends EncryptionKeys {
 }
 
 export class SessionManagerConstructor implements SessionManager {
-    private readonly users = new Map<string, string>();
 
     constructor(private readonly keyStore: KeyStore, private readonly crypto: Crypto) { }
 
     public async createSession(initialState: InitialSessionState | Session): Promise<Session> {
         const session = new SessionConstructor(initialState, this.keyStore, this.crypto);
-        this.users.set(session.userId, session.sessionTag);
         await session.save();
         return session;
     }
@@ -50,15 +47,11 @@ export class SessionManagerConstructor implements SessionManager {
         return state ? new SessionConstructor(state, this.keyStore, this.crypto) : null;
     }
 
-    private async getSessionTag(userId: UserId | string) {
-        const sessionTag = this.users.get(userId.toString());
-        if (!sessionTag)
-            throw new Error("User not found: " + userId);
-        return sessionTag;
-    }
 
     public async encrypt(userId: UserId | string, plaintext: Bytes): Promise<Ciphertext> {
-        const sessionTag = await this.getSessionTag(userId);
+        const sessionTag = await this.keyStore.getSessionTag(userId.toString());
+        if (!sessionTag)
+            throw new Error("User not found: " + userId);
         const session = await this.getSession(sessionTag);
         if (!session)
             throw new Error("Session not found for sessionTag: " + sessionTag);
@@ -70,7 +63,9 @@ export class SessionManagerConstructor implements SessionManager {
     public async decrypt(userId: UserId, ciphertext: Ciphertext | Bytes): Promise<Bytes> {
         const { CiphertextConstructor } = useConstructors(this.crypto);
 
-        const sessionTag = await this.getSessionTag(userId);
+        const sessionTag = await this.keyStore.getSessionTag(userId.toString());
+        if (!sessionTag)
+            throw new Error("User not found: " + userId);
         const session = await this.getSession(sessionTag);
         if (!session)
             throw new Error("Session not found for sessionTag: " + sessionTag);
@@ -94,34 +89,33 @@ export class SessionConstructor implements Session {
     #rootKey: Uint8Array;
     #headerKey?: Uint8Array;
     #nextHeaderKey?: Uint8Array;
+    #sendingChain?: KeyChain;
+    #receivingChain?: KeyChain;
+    readonly #headerKeys: Map<string, Uint8Array>;
     readonly #previousKeys = new KeyMap<string, Uint8Array>();
-
-    private sendingChain?: KeyChain;
-    private receivingChain?: KeyChain;
-    private readonly headerKeys: Map<string, Uint8Array>;
 
     constructor(init: InitialSessionState | Session, private readonly keyStore: KeyStore, private readonly crypto: Crypto) {
         if (!(init instanceof SessionConstructor)) {
             const { remoteKey, userId, sessionTag, secretKey, rootKey, sendingChain, receivingChain, headerKey, nextHeaderKey, headerKeys, previousKeys } = init as InitialSessionState;
             this.userId = userId;
-            this.sessionTag = sessionTag ?? decodeBase64(this.crypto.hkdf(encodeBase64(rootKey), new Uint8Array(32).fill(0), "/freesignal/session-authtag", 32));
-            this.#keyPair = this.crypto.ECDH.keyPair(secretKey ? encodeBase64(secretKey) : undefined);
-            this.#rootKey = encodeBase64(rootKey);
-            this.sendingChain = sendingChain ? new KeyChain(sendingChain, this.crypto) : undefined;
-            this.receivingChain = receivingChain ? new KeyChain(receivingChain, this.crypto) : undefined;
-            this.headerKeys = new Map<string, Uint8Array>(headerKeys?.map(([key, value]) => [key, encodeBase64(value)]));
-            this.#previousKeys = new Map<string, Uint8Array>(previousKeys?.map(([key, value]) => [key, encodeBase64(value)]));
+            this.sessionTag = sessionTag ?? this.crypto.Utils.decodeBase64(this.crypto.hkdf(this.crypto.Utils.encodeBase64(rootKey), new Uint8Array(32).fill(0), "/freesignal/session-authtag", 32));
+            this.#keyPair = this.crypto.ECDH.keyPair(secretKey ? this.crypto.Utils.encodeBase64(secretKey) : undefined);
+            this.#rootKey = this.crypto.Utils.encodeBase64(rootKey);
+            this.#sendingChain = sendingChain ? new KeyChain(sendingChain, this.crypto) : undefined;
+            this.#receivingChain = receivingChain ? new KeyChain(receivingChain, this.crypto) : undefined;
+            this.#headerKeys = new Map<string, Uint8Array>(headerKeys?.map(([key, value]) => [key, this.crypto.Utils.encodeBase64(value)]));
+            this.#previousKeys = new Map<string, Uint8Array>(previousKeys?.map(([key, value]) => [key, this.crypto.Utils.encodeBase64(value)]));
 
             if (headerKey)
-                this.#headerKey = encodeBase64(headerKey);
+                this.#headerKey = this.crypto.Utils.encodeBase64(headerKey);
 
             if (nextHeaderKey) {
-                this.#nextHeaderKey = encodeBase64(nextHeaderKey);
-                this.headerKeys.set(decodeBase64(this.crypto.hash(encodeBase64(nextHeaderKey))), encodeBase64(nextHeaderKey));
+                this.#nextHeaderKey = this.crypto.Utils.encodeBase64(nextHeaderKey);
+                this.#headerKeys.set(this.crypto.Utils.decodeBase64(this.crypto.hash(this.crypto.Utils.encodeBase64(nextHeaderKey))), this.crypto.Utils.encodeBase64(nextHeaderKey));
             }
 
             if (remoteKey) {
-                this.sendingChain = this.getChain(remoteKey, this.#headerKey);
+                this.#sendingChain = this.getChain(remoteKey, this.#headerKey);
                 this.#headerKey = undefined;
             }
         } else {
@@ -131,10 +125,10 @@ export class SessionConstructor implements Session {
             this.#headerKey = init.#headerKey;
             this.#nextHeaderKey = init.#nextHeaderKey;
             this.#previousKeys = init.#previousKeys
-            this.sendingChain = init.sendingChain;
-            this.receivingChain = init.receivingChain;
+            this.#sendingChain = init.#sendingChain;
+            this.#receivingChain = init.#receivingChain;
             this.sessionTag = init.sessionTag;
-            this.headerKeys = init.headerKeys;
+            this.#headerKeys = init.#headerKeys;
         }
     }
 
@@ -147,11 +141,11 @@ export class SessionConstructor implements Session {
         const hashkey = this.crypto.hkdf(sharedKey, this.#rootKey, SessionConstructor.info, SessionConstructor.keyLength * 3);
         this.#rootKey = hashkey.subarray(0, SessionConstructor.keyLength);
         return new KeyChain({
-            publicKey: decodeBase64(this.#keyPair.publicKey),
-            remoteKey: decodeBase64(remoteKey),
-            chainKey: decodeBase64(hashkey.subarray(SessionConstructor.keyLength, SessionConstructor.keyLength * 2)),
-            nextHeaderKey: decodeBase64(hashkey.subarray(SessionConstructor.keyLength * 2)),
-            headerKey: headerKey ? decodeBase64(headerKey) : headerKey,
+            publicKey: this.crypto.Utils.decodeBase64(this.#keyPair.publicKey),
+            remoteKey: this.crypto.Utils.decodeBase64(remoteKey),
+            chainKey: this.crypto.Utils.decodeBase64(hashkey.subarray(SessionConstructor.keyLength, SessionConstructor.keyLength * 2)),
+            nextHeaderKey: this.crypto.Utils.decodeBase64(hashkey.subarray(SessionConstructor.keyLength * 2)),
+            headerKey: headerKey ? this.crypto.Utils.decodeBase64(headerKey) : headerKey,
             count: 0,
             previousCount: previousCount ?? 0
         }, this.crypto);
@@ -159,48 +153,48 @@ export class SessionConstructor implements Session {
 
     private getHeaderKey(hash?: string): Uint8Array | undefined {
         if (!hash)
-            return this.#headerKey ?? this.sendingChain?.headerKey;
-        return this.headerKeys.get(hash);
+            return this.#headerKey ?? this.#sendingChain?.headerKey;
+        return this.#headerKeys.get(hash);
     }
 
     private getSendingKey(): PrivateEncryptionKeys | undefined {
-        if (!this.sendingChain)
+        if (!this.#sendingChain)
             return;
-        const secretKey = this.sendingChain.getKey();
+        const secretKey = this.#sendingChain.getKey();
         return {
-            count: this.sendingChain.count,
-            previous: this.sendingChain.previousCount,
-            publicKey: this.sendingChain.publicKey,
+            count: this.#sendingChain.count,
+            previous: this.#sendingChain.previousCount,
+            publicKey: this.#sendingChain.publicKey,
             secretKey
         }
     }
 
     private getReceivingKey(encryptionKeys: EncryptionKeys): Uint8Array | undefined {
-        if (!this.#previousKeys.has(decodeBase64(encryptionKeys.publicKey) + encryptionKeys.count.toString())) {
-            if (!compareBytes(encryptionKeys.publicKey, this.receivingChain?.remoteKey ?? new Uint8Array())) {
-                while (this.receivingChain && this.receivingChain.count < encryptionKeys.previous) {
-                    const key = this.receivingChain.getKey();
-                    this.#previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
+        if (!this.#previousKeys.has(this.crypto.Utils.decodeBase64(encryptionKeys.publicKey) + encryptionKeys.count.toString())) {
+            if (!this.crypto.Utils.compareBytes(encryptionKeys.publicKey, this.#receivingChain?.remoteKey ?? new Uint8Array())) {
+                while (this.#receivingChain && this.#receivingChain.count < encryptionKeys.previous) {
+                    const key = this.#receivingChain.getKey();
+                    this.#previousKeys.set(this.crypto.Utils.decodeBase64(this.#receivingChain.remoteKey) + this.#receivingChain.count.toString(), key);
                 }
 
-                this.receivingChain = this.getChain(encryptionKeys.publicKey, this.#nextHeaderKey ?? this.receivingChain?.nextHeaderKey, this.receivingChain?.count);
-                this.headerKeys.set(decodeBase64(this.crypto.hash(this.receivingChain.nextHeaderKey)), this.receivingChain.nextHeaderKey);
+                this.#receivingChain = this.getChain(encryptionKeys.publicKey, this.#nextHeaderKey ?? this.#receivingChain?.nextHeaderKey, this.#receivingChain?.count);
+                this.#headerKeys.set(this.crypto.Utils.decodeBase64(this.crypto.hash(this.#receivingChain.nextHeaderKey)), this.#receivingChain.nextHeaderKey);
                 if (this.#nextHeaderKey)
                     this.#nextHeaderKey = undefined;
                 this.#keyPair = this.crypto.ECDH.keyPair();
-                this.sendingChain = this.getChain(encryptionKeys.publicKey, this.#headerKey ?? this.sendingChain?.nextHeaderKey, this.sendingChain?.count);
+                this.#sendingChain = this.getChain(encryptionKeys.publicKey, this.#headerKey ?? this.#sendingChain?.nextHeaderKey, this.#sendingChain?.count);
                 if (this.#headerKey)
                     this.#headerKey = undefined;
             }
-            if (!this.receivingChain)
+            if (!this.#receivingChain)
                 throw new Error("Error initializing receivingChain");
 
-            while (this.receivingChain.count < encryptionKeys.count) {
-                const key = this.receivingChain.getKey();
-                this.#previousKeys.set(decodeBase64(this.receivingChain.remoteKey) + this.receivingChain.count.toString(), key);
+            while (this.#receivingChain.count < encryptionKeys.count) {
+                const key = this.#receivingChain.getKey();
+                this.#previousKeys.set(this.crypto.Utils.decodeBase64(this.#receivingChain.remoteKey) + this.#receivingChain.count.toString(), key);
             }
         }
-        return this.#previousKeys.get(decodeBase64(encryptionKeys.publicKey) + encryptionKeys.count.toString());
+        return this.#previousKeys.get(this.crypto.Utils.decodeBase64(encryptionKeys.publicKey) + encryptionKeys.count.toString());
     }
 
     public encrypt(data: Bytes): Ciphertext {
@@ -227,7 +221,7 @@ export class SessionConstructor implements Session {
         const encrypted = CiphertextConstructor.from(ciphertext);
         let headerData: Uint8Array = encrypted.header;
         if (encrypted.hashkey && encrypted.nonce) {
-            const headerKey = this.getHeaderKey(decodeBase64(encrypted.hashkey));
+            const headerKey = this.getHeaderKey(this.crypto.Utils.decodeBase64(encrypted.hashkey));
             if (!headerKey)
                 throw new Error("Error calculating headerKey");
             const data = this.crypto.Box.decrypt(encrypted.header, encrypted.nonce, headerKey);
@@ -250,17 +244,17 @@ export class SessionConstructor implements Session {
     }
 
     public save(): Promise<void> {
-        return this.keyStore.storeSession(this.sessionTag, {
+        return this.keyStore.storeSession({
             userId: this.userId,
             sessionTag: this.sessionTag,
-            secretKey: decodeBase64(this.#keyPair.secretKey),
-            rootKey: decodeBase64(this.#rootKey),
-            sendingChain: this.sendingChain?.toJSON(),
-            receivingChain: this.receivingChain?.toJSON(),
-            headerKey: this.#headerKey ? decodeBase64(this.#headerKey) : undefined,
-            nextHeaderKey: this.#nextHeaderKey ? decodeBase64(this.#nextHeaderKey) : undefined,
-            headerKeys: Array.from(this.headerKeys.entries()).map(([key, value]) => [key, decodeBase64(value)]),
-            previousKeys: Array.from(this.#previousKeys.entries()).map(([key, value]) => [key, decodeBase64(value)]),
+            secretKey: this.crypto.Utils.decodeBase64(this.#keyPair.secretKey),
+            rootKey: this.crypto.Utils.decodeBase64(this.#rootKey),
+            sendingChain: this.#sendingChain?.toJSON(),
+            receivingChain: this.#receivingChain?.toJSON(),
+            headerKey: this.#headerKey ? this.crypto.Utils.decodeBase64(this.#headerKey) : undefined,
+            nextHeaderKey: this.#nextHeaderKey ? this.crypto.Utils.decodeBase64(this.#nextHeaderKey) : undefined,
+            headerKeys: Array.from(this.#headerKeys.entries()).map(([key, value]) => [key, this.crypto.Utils.decodeBase64(value)]),
+            previousKeys: Array.from(this.#previousKeys.entries()).map(([key, value]) => [key, this.crypto.Utils.decodeBase64(value)]),
         });
     }
 }
@@ -277,13 +271,17 @@ class KeyChain {
     private _count: number = 0;
 
     public constructor({ publicKey, remoteKey, nextHeaderKey, chainKey, headerKey, count, previousCount }: KeyChainState, private readonly crypto: Crypto) {
-        this.#chainKey = encodeBase64(chainKey);
-        this.publicKey = encodeBase64(publicKey);
-        this.remoteKey = encodeBase64(remoteKey);
-        this.nextHeaderKey = encodeBase64(nextHeaderKey);
-        this.headerKey = headerKey ? encodeBase64(headerKey) : undefined;
+        this.#chainKey = this.crypto.Utils.encodeBase64(chainKey);
+        this.publicKey = this.crypto.Utils.encodeBase64(publicKey);
+        this.remoteKey = this.crypto.Utils.encodeBase64(remoteKey);
+        this.nextHeaderKey = this.crypto.Utils.encodeBase64(nextHeaderKey);
+        this.headerKey = headerKey ? this.crypto.Utils.encodeBase64(headerKey) : undefined;
         this._count = count;
         this.previousCount = previousCount ?? 0;
+    }
+
+    public get count(): number {
+        return this._count;
     }
 
     public getKey(): Uint8Array {
@@ -298,17 +296,13 @@ class KeyChain {
         return "[object KeyChain]";
     }
 
-    public get count(): number {
-        return this._count;
-    }
-
     public toJSON(): KeyChainState {
         return {
-            publicKey: decodeBase64(this.publicKey),
-            remoteKey: decodeBase64(this.remoteKey),
-            headerKey: this.headerKey ? decodeBase64(this.headerKey) : undefined,
-            nextHeaderKey: decodeBase64(this.nextHeaderKey),
-            chainKey: decodeBase64(this.#chainKey),
+            publicKey: this.crypto.Utils.decodeBase64(this.publicKey),
+            remoteKey: this.crypto.Utils.decodeBase64(this.remoteKey),
+            headerKey: this.headerKey ? this.crypto.Utils.decodeBase64(this.headerKey) : undefined,
+            nextHeaderKey: this.crypto.Utils.decodeBase64(this.nextHeaderKey),
+            chainKey: this.crypto.Utils.decodeBase64(this.#chainKey),
             count: this.count,
             previousCount: this.previousCount
         }

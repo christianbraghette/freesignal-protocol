@@ -48,13 +48,13 @@ class UserConstructor implements User {
     constructor(public readonly publicIdentity: PublicIdentity, keyStore: KeyStore, private readonly crypto: Crypto) {
         this.#sessionManager = new SessionManagerConstructor(keyStore, crypto);
         this.#keyExchangeManager = new KeyExchangeManagerConstructor(publicIdentity, keyStore, crypto);
-        this.#keyExchangeManager.socket.on('session', async (session) => {
+        this.#keyExchangeManager.emitter.on('session', async (session) => {
             this.#sessionManager.createSession(session);
         });
     }
 
-    public get socket() {
-        return this.#keyExchangeManager.socket;
+    public get emitter() {
+        return this.#keyExchangeManager.emitter;
     }
 
     public get id(): UserId {
@@ -73,7 +73,7 @@ class UserConstructor implements User {
         return new Promise(async (resolve, reject) => {
             if (timeout)
                 setTimeout(() => reject(), timeout);
-            while ((await this.#keyExchangeManager.socket.wait('session', timeout))?.userId.toString() !== from.toString());
+            while ((await this.#keyExchangeManager.emitter.wait('session', timeout))?.userId.toString() !== from.toString());
             resolve();
         });
     }

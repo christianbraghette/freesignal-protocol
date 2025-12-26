@@ -7,8 +7,8 @@ const userFactory = new UserFactory(new InMemoryKeystoreFactory(), crypto);
 const alice = await userFactory.create();
 const bob = await userFactory.create();
 
-alice.socket.on('send', data => bob.socket.emit('receive', data));
-bob.socket.on('send', data => alice.socket.emit('receive', data));
+alice.emitter.on('send', data => bob.emitter.emit('receive', data));
+bob.emitter.on('send', data => alice.emitter.emit('receive', data));
 
 const bundle = await alice.generatePreKeyBundle();
 bob.handleIncomingPreKeyBundle(bundle);

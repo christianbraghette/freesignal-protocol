@@ -46,8 +46,8 @@ const alice = await userFactory.create();
 const bob = await userFactory.create();
 
 // Wire transport (in-memory) — the test uses event sockets to simulate transport
-alice.socket.on('send', data => bob.socket.emit('receive', data));
-bob.socket.on('send', data => alice.socket.emit('receive', data));
+alice.emitter.on('send', data => bob.emitter.emit('receive', data));
+bob.emitter.on('send', data => alice.emitter.emit('receive', data));
 
 // Exchange pre-key bundle and complete handshake
 const bundle = await alice.generatePreKeyBundle();
@@ -60,7 +60,7 @@ const plaintext = await bob.decrypt(alice.id, ciphertext);
 console.log(plaintext);
 ```
 
-This pattern demonstrates how `UserFactory` composes the keystore, key-exchange manager and session manager to create a usable `User` object with `encrypt`, `decrypt`, and `socket` (transport) hooks.
+This pattern demonstrates how `UserFactory` composes the keystore, key-exchange manager and session manager to create a usable `User` object with `encrypt`, `decrypt`, and `emitter` (transport) hooks.
 
 ## API Overview
 
@@ -70,7 +70,7 @@ This pattern demonstrates how `UserFactory` composes the keystore, key-exchange 
 
 - `User` (see [src/user.ts](src/user.ts))
   - `id: UserId` — the user's stable identifier derived from the public identity.
-  - `socket` — an EventEmitter used by the `KeyExchangeManager` to send and receive `PreKeyMessage` payloads. Use your transport to route `send`/`receive` events between peers.
+  - `emitter` — an EventEmitter used by the `KeyExchangeManager` to send and receive `PreKeyMessage` payloads. Use your transport to route `send`/`receive` events between peers.
   - `encrypt(to, plaintext)` / `decrypt(from, ciphertext)` — convenience methods that use the session manager.
   - `generatePreKeyBundle()` / `handleIncomingPreKeyBundle(bundle)` — helpers for the initial X3DH-like key bundle exchange.
 

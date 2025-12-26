@@ -25,6 +25,7 @@ class InMemoryKeystore implements KeyStore {
     readonly #identity: Identity;
     #sessions = new Map<string, SessionState>();
     #preKeys = new Map<string, PreKey>();
+    #users = new Map<string, string>();
 
 
     constructor(identity: Identity) {
@@ -36,12 +37,17 @@ class InMemoryKeystore implements KeyStore {
     }
 
 
+    public async getSessionTag(userId: string): Promise<string | null> {
+        return this.#users.get(userId.toString()) ?? null;
+    }
+
     public async loadSession(sessionTag: string): Promise<SessionState | null> {
         return this.#sessions.get(sessionTag) ?? null;
     }
 
-    public async storeSession(sessionTag: string, session: SessionState): Promise<void> {
-        this.#sessions.set(sessionTag, session);
+    public async storeSession(session: SessionState): Promise<void> {
+        this.#users.set(session.userId, session.sessionTag);
+        this.#sessions.set(session.sessionTag, session);
     }
 
 

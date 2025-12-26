@@ -18,20 +18,20 @@
  */
 
 import { Bytes, Ciphertext, Encodable, Identity, PublicIdentity, UserId, Crypto } from "@freesignal/interfaces";
-import { bytesToNumber, concatBytes, decodeBase64, decodeBase64URL, encodeBase64, numberToBytes } from "@freesignal/crypto/utils";
 
 export function useConstructors(crypto: Crypto) {
+
     class UserIdConstructor implements UserId {
         public static readonly keyLength = 32;
 
         public constructor(public readonly bytes: Bytes) { };
 
         public toString(): string {
-            return decodeBase64(this.bytes);
+            return crypto.Utils.decodeBase64(this.bytes);
         }
 
         public toUrl(): string {
-            return decodeBase64URL(this.bytes);
+            return crypto.Utils.decodeBase64URL(this.bytes);
         }
 
         public toJSON(): string {
@@ -40,7 +40,7 @@ export function useConstructors(crypto: Crypto) {
 
         public static fromKey(identityKey: string | Uint8Array | PublicIdentity): UserId {
             if (typeof identityKey === 'string')
-                identityKey = encodeBase64(identityKey);
+                identityKey = crypto.Utils.encodeBase64(identityKey);
             else if (!(identityKey instanceof Uint8Array))
                 identityKey = identityKey.bytes;
             return new UserIdConstructor(crypto.hkdf(identityKey as Uint8Array, new Uint8Array(32).fill(0), "/freesignal/userid", UserIdConstructor.keyLength));
@@ -48,7 +48,7 @@ export function useConstructors(crypto: Crypto) {
 
         public static from(userId: string | Uint8Array | UserId): UserId {
             if (typeof userId === 'string')
-                userId = encodeBase64(userId);
+                userId = crypto.Utils.encodeBase64(userId);
             return new UserIdConstructor(userId instanceof Uint8Array ? userId : userId.bytes);
         }
     }
@@ -71,7 +71,7 @@ export function useConstructors(crypto: Crypto) {
         }
 
         public toString(): string {
-            return decodeBase64(this.bytes);
+            return crypto.Utils.decodeBase64(this.bytes);
         }
 
         public toJSON(): string {
@@ -81,7 +81,7 @@ export function useConstructors(crypto: Crypto) {
         public static from(publicIdentity: PublicIdentity | Bytes | string): PublicIdentity {
             if (publicIdentity instanceof Uint8Array || typeof publicIdentity === 'string') {
                 if (typeof publicIdentity === 'string')
-                    publicIdentity = encodeBase64(publicIdentity);
+                    publicIdentity = crypto.Utils.encodeBase64(publicIdentity);
                 if (publicIdentity.length !== PublicIdentityConstructor.keyLength)
                     throw new Error("Invalid key length");
             } else {
@@ -107,7 +107,7 @@ export function useConstructors(crypto: Crypto) {
         public static from(identity: Identity | Uint8Array | string): Identity {
             if (identity instanceof Uint8Array || typeof identity === 'string') {
                 if (typeof identity === 'string')
-                    identity = encodeBase64(identity);
+                    identity = crypto.Utils.encodeBase64(identity);
                 if (identity.length !== IdentityConstructor.keyLength)
                     throw new Error("Invalid key length");
             } else {
@@ -125,7 +125,7 @@ export function useConstructors(crypto: Crypto) {
         public constructor(public readonly count: number, public readonly previous: number, public readonly publicKey: Uint8Array, public readonly nonce: Uint8Array) { }
 
         public get bytes(): Bytes {
-            return concatBytes(numberToBytes(this.count, CiphertextHeaderConstructor.countLength), numberToBytes(this.previous, CiphertextHeaderConstructor.countLength), this.publicKey, this.nonce)
+            return crypto.Utils.concatBytes(crypto.Utils.numberToBytes(this.count, CiphertextHeaderConstructor.countLength), crypto.Utils.numberToBytes(this.previous, CiphertextHeaderConstructor.countLength), this.publicKey, this.nonce)
         }
 
         public toJSON(): {
@@ -136,7 +136,7 @@ export function useConstructors(crypto: Crypto) {
             return {
                 count: this.count,
                 previous: this.previous,
-                publicKey: decodeBase64(this.publicKey)
+                publicKey: crypto.Utils.decodeBase64(this.publicKey)
             }
         }
 
@@ -145,8 +145,8 @@ export function useConstructors(crypto: Crypto) {
                 data = data.bytes;
             let offset = 0;
             return new CiphertextHeaderConstructor(
-                bytesToNumber(data.subarray(offset, offset += CiphertextHeaderConstructor.countLength)),
-                bytesToNumber(data.subarray(offset, offset += CiphertextHeaderConstructor.countLength)),
+                crypto.Utils.bytesToNumber(data.subarray(offset, offset += CiphertextHeaderConstructor.countLength)),
+                crypto.Utils.bytesToNumber(data.subarray(offset, offset += CiphertextHeaderConstructor.countLength)),
                 data.subarray(offset, offset += CiphertextHeaderConstructor.keyLength),
                 data.subarray(offset, offset += CiphertextConstructor.nonceLength)
             );
@@ -179,7 +179,7 @@ export function useConstructors(crypto: Crypto) {
         }
 
         public get bytes(): Bytes {
-            return concatBytes(numberToBytes(this.version | (this.hashkey && this.nonce ? 128 : 0), 1), numberToBytes(this.header.length, 3), this.header, this.hashkey ?? new Uint8Array(), this.nonce ?? new Uint8Array, this.payload);
+            return crypto.Utils.concatBytes(crypto.Utils.numberToBytes(this.version | (this.hashkey && this.nonce ? 128 : 0), 1), crypto.Utils.numberToBytes(this.header.length, 3), this.header, this.hashkey ?? new Uint8Array(), this.nonce ?? new Uint8Array, this.payload);
         }
 
         public toJSON(): {
@@ -191,18 +191,18 @@ export function useConstructors(crypto: Crypto) {
         } {
             return {
                 version: this.version,
-                header: decodeBase64(this.header),
-                hashkey: this.hashkey ? decodeBase64(this.hashkey) : undefined,
-                nonce: this.nonce ? decodeBase64(this.nonce) : undefined,
-                payload: decodeBase64(this.payload)
+                header: crypto.Utils.decodeBase64(this.header),
+                hashkey: this.hashkey ? crypto.Utils.decodeBase64(this.hashkey) : undefined,
+                nonce: this.nonce ? crypto.Utils.decodeBase64(this.nonce) : undefined,
+                payload: crypto.Utils.decodeBase64(this.payload)
             }
         }
 
         public static from(data: Bytes | Ciphertext): Ciphertext {
             if (!(data instanceof Uint8Array))
                 data = data.bytes;
-            const versionByte = bytesToNumber(data.subarray(0, 1));
-            const headerLength = bytesToNumber(data.subarray(1, 4));
+            const versionByte = crypto.Utils.bytesToNumber(data.subarray(0, 1));
+            const headerLength = crypto.Utils.bytesToNumber(data.subarray(1, 4));
             let offset = 4;
             const header = data.subarray(offset, offset += headerLength);
             let hashkey: Uint8Array | undefined, nonce: Uint8Array | undefined;
