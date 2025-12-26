@@ -19,3 +19,4 @@
 
 export { UserFactoryConstructor as UserFactory } from "./user.js"
 export { InMemoryKeystoreFactory } from "./keystore.js"
+export { useConstructors } from "./constructors.js"

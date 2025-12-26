@@ -1,4 +1,5 @@
-import { Identity, KeyStore, PreKey, PreKeyId, SessionState, KeyStoreFactory, PublicIdentity } from "@freesignal/interfaces";
+import { decodeBase64 } from "@freesignal/crypto/utils";
+import { Identity, KeyStore, PreKey, PreKeyId, SessionState, KeyStoreFactory, PublicIdentity, Bytes, UserId } from "@freesignal/interfaces";
 
 export class InMemoryKeystoreFactory implements KeyStoreFactory {
     #stores = new Map<string, KeyStore>();
@@ -26,19 +27,28 @@ class InMemoryKeystore implements KeyStore {
     #sessions = new Map<string, SessionState>();
     #preKeys = new Map<string, PreKey>();
     #users = new Map<string, string>();
+    #hashkeys = new Map<string, string>();
 
 
     constructor(identity: Identity) {
         this.#identity = identity;
     }
 
+
     public async getIdentity(): Promise<Identity> {
         return this.#identity;
     }
 
-
-    public async getSessionTag(userId: string): Promise<string | null> {
+    public async getUserSession(userId: UserId | string): Promise<string | null> {
         return this.#users.get(userId.toString()) ?? null;
+    }
+
+    public async getSessionTag(hashkey: Bytes | string): Promise<string | null> {
+        return this.#hashkeys.get(typeof hashkey === 'string' ? hashkey : decodeBase64(hashkey)) ?? null;
+    }
+
+    public async setSessionTag(hashkey: Bytes | string, sessionTag: string): Promise<void> {
+        this.#hashkeys.set(typeof hashkey === 'string' ? hashkey : decodeBase64(hashkey), sessionTag);
     }
 
     public async loadSession(sessionTag: string): Promise<SessionState | null> {

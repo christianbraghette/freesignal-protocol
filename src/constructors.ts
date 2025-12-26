@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
-import { Bytes, Ciphertext, Encodable, Identity, PublicIdentity, UserId, Crypto } from "@freesignal/interfaces";
+import { Bytes, Ciphertext, Identity, PublicIdentity, UserId, Crypto, CiphertextHeader } from "@freesignal/interfaces";
 
 export function useConstructors(crypto: Crypto) {
 
@@ -117,7 +117,7 @@ export function useConstructors(crypto: Crypto) {
         }
     }
 
-    class CiphertextHeaderConstructor implements Encodable {
+    class CiphertextHeaderConstructor implements CiphertextHeader {
         public static readonly keyLength = crypto.Box.keyLength;
         public static readonly nonceLength = crypto.Box.nonceLength;
         public static readonly countLength = 2;
@@ -159,14 +159,14 @@ export function useConstructors(crypto: Crypto) {
         public static readonly nonceLength = crypto.Box.nonceLength;
 
         public readonly version: number;
+        public readonly hashkey: Uint8Array;
         public readonly header: Uint8Array;
-        public readonly hashkey?: Uint8Array;
-        public readonly nonce?: Uint8Array;
+        public readonly nonce: Uint8Array;
         public readonly payload: Uint8Array;
 
         public constructor(opts: { header: Uint8Array, payload: Uint8Array, version?: number })
         public constructor(opts: { header: Uint8Array, hashkey: Uint8Array, nonce: Uint8Array, payload: Uint8Array, version?: number })
-        public constructor({ hashkey, header, nonce, payload, version }: { header: Uint8Array, hashkey?: Uint8Array, nonce?: Uint8Array, payload: Uint8Array, version?: number }) {
+        public constructor({ hashkey, header, nonce, payload, version }: { header: Uint8Array, hashkey: Uint8Array, nonce: Uint8Array, payload: Uint8Array, version?: number }) {
             this.version = version ?? CiphertextConstructor.version;
             this.header = header;
             this.hashkey = hashkey;
@@ -185,15 +185,15 @@ export function useConstructors(crypto: Crypto) {
         public toJSON(): {
             version: number;
             header: string;
-            hashkey?: string;
-            nonce?: string;
+            hashkey: string;
+            nonce: string;
             payload: string;
         } {
             return {
                 version: this.version,
                 header: crypto.Utils.decodeBase64(this.header),
-                hashkey: this.hashkey ? crypto.Utils.decodeBase64(this.hashkey) : undefined,
-                nonce: this.nonce ? crypto.Utils.decodeBase64(this.nonce) : undefined,
+                hashkey: crypto.Utils.decodeBase64(this.hashkey),
+                nonce: crypto.Utils.decodeBase64(this.nonce),
                 payload: crypto.Utils.decodeBase64(this.payload)
             }
         }

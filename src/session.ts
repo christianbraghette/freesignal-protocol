@@ -40,36 +40,32 @@ export class SessionManagerConstructor implements SessionManager {
         return session;
     }
 
-    public async getSession(sessionTag: string): Promise<Session | null> {
+    public async getSession(sessionTag: string): Promise<Session> {
         const state = await this.keyStore.loadSession(sessionTag);
         if (!state)
-            return null;
-        return state ? new SessionConstructor(state, this.keyStore, this.crypto) : null;
+            throw new Error("Session not found for sessionTag: " + sessionTag);
+        return new SessionConstructor(state, this.keyStore, this.crypto);
     }
 
-
     public async encrypt(userId: UserId | string, plaintext: Bytes): Promise<Ciphertext> {
-        const sessionTag = await this.keyStore.getSessionTag(userId.toString());
+        const sessionTag = await this.keyStore.getUserSession(userId.toString());
         if (!sessionTag)
             throw new Error("User not found: " + userId);
         const session = await this.getSession(sessionTag);
-        if (!session)
-            throw new Error("Session not found for sessionTag: " + sessionTag);
         const ciphertext = session.encrypt(plaintext);
+        await this.keyStore.setSessionTag(ciphertext.hashkey, session.sessionTag);
         await session.save();
         return ciphertext;
     }
 
-    public async decrypt(userId: UserId, ciphertext: Ciphertext | Bytes): Promise<Bytes> {
+    public async decrypt(ciphertext: Ciphertext | Bytes): Promise<Bytes> {
         const { CiphertextConstructor } = useConstructors(this.crypto);
 
-        const sessionTag = await this.keyStore.getSessionTag(userId.toString());
-        if (!sessionTag)
-            throw new Error("User not found: " + userId);
-        const session = await this.getSession(sessionTag);
-        if (!session)
-            throw new Error("Session not found for sessionTag: " + sessionTag);
         ciphertext = CiphertextConstructor.from(ciphertext);
+        const sessionTag = await this.keyStore.getSessionTag(ciphertext.hashkey);
+        if (!sessionTag)
+            throw new Error("Headerkey not found: " + this.crypto.Utils.decodeBase64(ciphertext.hashkey));
+        const session = await this.getSession(sessionTag);
         const cleartext = session.decrypt(ciphertext);
         await session.save();
         return cleartext;
@@ -224,7 +220,7 @@ export class SessionConstructor implements Session {
             const headerKey = this.getHeaderKey(this.crypto.Utils.decodeBase64(encrypted.hashkey));
             if (!headerKey)
                 throw new Error("Error calculating headerKey");
-            const data = this.crypto.Box.decrypt(encrypted.header, encrypted.nonce, headerKey);
+            const data = this.crypto.Box.decrypt(headerData, encrypted.nonce, headerKey);
             if (!data)
                 throw new Error("Error decrypting header");
             headerData = data;
@@ -243,7 +239,9 @@ export class SessionConstructor implements Session {
         return this.#previousKeys.size > 0;
     }
 
-    public save(): Promise<void> {
+    public async save(): Promise<void> {
+        if (this.#nextHeaderKey)
+            await this.keyStore.setSessionTag(this.crypto.hash(this.#nextHeaderKey), this.sessionTag);
         return this.keyStore.storeSession({
             userId: this.userId,
             sessionTag: this.sessionTag,

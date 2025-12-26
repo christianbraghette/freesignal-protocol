@@ -65,8 +65,8 @@ class UserConstructor implements User {
         return this.#sessionManager.encrypt(to, this.crypto.Utils.encodeData(plaintext));
     }
 
-    public async decrypt<T>(from: UserId | string, ciphertext: Ciphertext | Bytes): Promise<T> {
-        return this.crypto.Utils.decodeData<T>(await this.#sessionManager.decrypt(from, ciphertext));
+    public async decrypt<T>(ciphertext: Ciphertext | Bytes): Promise<T> {
+        return this.crypto.Utils.decodeData<T>(await this.#sessionManager.decrypt(ciphertext));
     }
 
     public waitHandshake(from: UserId | string, timeout?: number): Promise<void> {
